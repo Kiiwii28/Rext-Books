@@ -1,0 +1,9 @@
+Flask>=3.0
+Markdown>=3.5
+requests>=2.31
+python-dotenv>=1.0
+
+# PDF export. By default it uses a headless Chrome/Edge/Chromium browser if one
+# is installed (no Python package needed — Edge ships with Windows). WeasyPrint
+# is an optional alternative for headless Linux/servers; it needs Pango/cairo.
+# weasyprint>=61

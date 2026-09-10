@@ -1,0 +1,9 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+books/*.json
+books/assets/
+books/.trash/
+!books/.gitkeep
+.DS_Store

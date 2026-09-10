@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Rextbooks · Recursive Textbooks</title>
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}" />
+  <script>
+    // apply the saved theme before first paint (no flash)
+    try {
+      var t = localStorage.getItem("rextbooks:theme");
+      if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+    } catch (e) {}
+  </script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+</head>
+<body>
+  <div class="app-bg" aria-hidden="true"><span class="blob b1"></span><span class="blob b2"></span><span class="blob b3"></span></div>
+
+  <header class="topbar glass">
+    <div class="brand">
+      <span class="logo" aria-hidden="true"></span>
+      <div class="brand-text">
+        <span class="wordmark">Rextbooks</span>
+        <span class="tagline">Recursive textbooks, built block by block</span>
+      </div>
+    </div>
+    <div class="topbar-center">
+      <select id="book-picker" class="book-picker" aria-label="Open book"></select>
+    </div>
+    <div class="topbar-actions">
+      <button id="btn-new-book" class="btn ghost">New book</button>
+      <button id="btn-import-book" class="btn ghost" title="Import a book from a .json file">Import</button>
+      <input id="import-file" type="file" accept=".json,application/json" hidden />
+      <button id="btn-export" class="btn ghost" title="Export this book">Export</button>
+      <button id="btn-delete-book" class="btn ghost danger" title="Delete this book">Delete</button>
+      <button id="btn-theme" class="mini-btn" title="Theme" aria-label="Toggle light / dark theme"></button>
+      <span id="save-state" class="save-state" aria-live="polite">Saved</span>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <section class="pane tree-pane glass" aria-label="Textbook outline">
+      <div class="pane-header">
+        <span class="pane-title">Outline</span>
+        <div class="pane-header-actions">
+          <button id="btn-expand-all" class="mini-btn" title="Expand all">⤢</button>
+          <button id="btn-collapse-all" class="mini-btn" title="Collapse all">⤡</button>
+        </div>
+      </div>
+      <div id="pick-banner" class="pick-banner" hidden>
+        <span id="pick-banner-text"></span>
+        <button id="pick-banner-done" class="btn sm primary">Done</button>
+      </div>
+      <div id="tree" class="tree" tabindex="0"></div>
+
+      <div id="empty-state" class="empty-state" hidden>
+        <div class="empty-icon">✨</div>
+        <h2>Start a new textbook</h2>
+        <p>Give it a topic and Rextbooks will help you grow the outline.</p>
+        <form id="start-form" class="start-form">
+          <input id="start-topic" type="text" placeholder="e.g. Business Management" autocomplete="off" required />
+          <button type="submit" class="btn primary sheen">Create</button>
+        </form>
+      </div>
+    </section>
+
+    <aside class="pane ai-pane glass" aria-label="AI assistant">
+      <div class="pane-header">
+        <span class="pane-title">AI Assistant</span>
+        <span id="ai-mode-chip" class="chip">outline</span>
+      </div>
+
+      <div class="ai-body">
+        <div class="ai-target">
+          <span class="ai-target-label">Target</span>
+          <span id="ai-target-path" class="ai-target-path">Whole textbook</span>
+        </div>
+
+        <label class="ai-count-row" id="ai-count-row">
+          <span>Number of headings</span>
+          <input id="ai-count" type="number" min="1" max="20" value="3" />
+        </label>
+
+        <div class="ai-tags">
+          <div class="ai-tag-group">
+            <span class="ai-tag-label">Tone</span>
+            <div id="ai-tones" class="chip-row" role="radiogroup" aria-label="Tone"></div>
+          </div>
+          <div class="ai-tag-group">
+            <span class="ai-tag-label">Depth</span>
+            <div id="ai-depths" class="chip-row" role="radiogroup" aria-label="Depth"></div>
+          </div>
+        </div>
+
+        <div class="ai-refine-row" id="ai-submode-row" hidden>
+          <span class="ai-tag-label">Generate</span>
+          <div class="segmented" role="tablist">
+            <button class="seg-btn active" data-sub="subheadings" role="tab">Sub-topics</button>
+            <button class="seg-btn" data-sub="content" role="tab">Content</button>
+          </div>
+        </div>
+
+        <div class="ai-refine-row" id="ai-refine-row" hidden>
+          <span class="ai-tag-label">Section exists</span>
+          <div class="segmented" role="tablist">
+            <button class="seg-btn active" data-refine="replace" role="tab">Replace</button>
+            <button class="seg-btn" data-refine="refine" role="tab">Refine</button>
+          </div>
+        </div>
+
+        <div class="ai-context">
+          <div class="ai-context-head">
+            <span class="ai-tag-label">Extra context</span>
+            <div class="ai-context-btns">
+              <button id="btn-add-context" class="btn ghost sm">＋ Add context</button>
+              <button id="btn-spark" class="btn ghost sm" title="Cross-breed two blocks">⚡ Spark</button>
+            </div>
+          </div>
+          <div id="ai-context-chips" class="ai-context-chips" hidden></div>
+        </div>
+
+        <label class="ai-prompt-label" for="ai-prompt">Prompt <span class="hint">(editable)</span></label>
+        <textarea id="ai-prompt" class="ai-prompt" spellcheck="true" rows="5"></textarea>
+
+        <div class="ai-actions">
+          <button id="btn-generate" class="btn primary sheen">Generate</button>
+          <button id="btn-stop" class="btn ghost" hidden>Stop</button>
+          <button id="btn-reset-prompt" class="btn ghost" title="Restore the default prompt">Reset</button>
+        </div>
+
+        <div id="ai-status" class="ai-status" hidden></div>
+        <pre id="ai-stream" class="ai-stream" hidden></pre>
+      </div>
+    </aside>
+  </main>
+
+  <div id="export-modal" class="modal-backdrop" hidden>
+    <div class="modal glass" role="dialog" aria-modal="true" aria-labelledby="export-title">
+      <div class="modal-head">
+        <h2 id="export-title">Export textbook</h2>
+        <button id="export-close" class="mini-btn" aria-label="Close">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="field">
+          <span class="field-label">Format</span>
+          <div class="segmented" id="export-format" role="tablist">
+            <button class="seg-btn active" data-fmt="pdf" role="tab">PDF</button>
+            <button class="seg-btn" data-fmt="md" role="tab">Markdown</button>
+            <button class="seg-btn" data-fmt="json" role="tab">JSON</button>
+          </div>
+        </div>
+
+        <div class="field" id="palette-field">
+          <span class="field-label">Colour palette</span>
+          <div id="palette-grid" class="palette-grid"></div>
+        </div>
+
+        <p id="export-note" class="export-note"></p>
+      </div>
+
+      <div class="modal-foot">
+        <button id="export-cancel" class="btn ghost">Cancel</button>
+        <button id="export-go" class="btn primary sheen">Export</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="spark-modal" class="modal-backdrop" hidden>
+    <div class="modal glass modal-wide" role="dialog" aria-modal="true" aria-labelledby="spark-title">
+      <div class="modal-head">
+        <h2 id="spark-title">⚡ Spark</h2>
+        <button id="spark-close" class="mini-btn" aria-label="Close">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="field">
+          <span class="field-label">Cross-breeding</span>
+          <div id="spark-sources" class="spark-sources"></div>
+        </div>
+        <div class="field">
+          <span class="field-label">Mode</span>
+          <div id="spark-modes" class="spark-modes"></div>
+        </div>
+        <div class="field">
+          <span class="field-label">Prompt <span class="hint">(editable)</span></span>
+          <textarea id="spark-prompt" class="ai-prompt" spellcheck="true" rows="3"></textarea>
+        </div>
+        <div id="spark-status" class="ai-status" hidden></div>
+        <pre id="spark-stream" class="ai-stream" hidden></pre>
+      </div>
+
+      <div class="modal-foot">
+        <button id="spark-cancel" class="btn ghost">Cancel</button>
+        <button id="spark-reset" class="btn ghost">Reset prompt</button>
+        <button id="spark-go" class="btn primary sheen">Generate</button>
+        <button id="spark-stop" class="btn ghost" hidden>Stop</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>

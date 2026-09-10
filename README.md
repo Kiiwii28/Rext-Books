@@ -1,0 +1,158 @@
+# Rextbooks 📚
+
+**Recursive Textbooks** — grow a textbook with an LLM, block by block.
+
+Start from a topic. Generate an **outline** (headings). For any heading, generate
+**subheadings**. For any subheading, generate its **section** content. Then
+rearrange, edit, add, delete, and rewrite blocks by hand, Notion-style — and
+export the finished book.
+
+Generation uses **DeepSeek** (OpenAI-compatible API), streamed token-by-token.
+
+## Requirements
+
+- Python 3.9+
+- A DeepSeek API key
+- (optional) Pango/cairo for PDF export — see below
+
+## Setup
+
+```bash
+pip install -r requirements.txt
+cp .env.example .env        # then put your key in .env
+```
+
+`.env`:
+
+```
+DEEPSEEK_API_KEY=sk-...
+DEEPSEEK_MODEL=deepseek-v4-flash     # cheapest; change if the API rejects it
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+```
+
+`.env` is gitignored and read only on the server — the key never reaches the browser.
+
+## Run
+
+```bash
+python app.py
+```
+
+Open <http://127.0.0.1:5000>.
+
+## Features
+
+- **Recursive generation** — outline → subheadings → section content, each step a
+  streamed DeepSeek call scoped to the selected block.
+- **Notion-style blocks** — drag to reorder, collapse, add, delete, rename inline.
+- **Recurse (`↳`)** — add a nested sub-topic under any heading/subheading, so trees
+  go arbitrarily deep. On a subheading with sub-topics the dock offers a
+  **Sub-topics / Content** toggle.
+- **Edit section text** — click ✎ on a section for an in-place Markdown editor with
+  live preview (`Ctrl/Cmd+Enter` = Done, `Esc` = cancel).
+- **Reprompt a section** — ↻ on a section, or just select it. When a section already
+  has text the dock shows **Replace** (fresh) / **Refine** (revise the current draft).
+- **Prompt tags** — pick a **tone** (Technical / Academic / Blog / Conversational /
+  Informative / Casual) and **depth** (Beginner / Intermediate / Advanced) in the
+  dock; they're added to every generation and saved per book.
+- **Extra context** — **＋ Add context** in the dock, then click other blocks in the
+  outline to feed them to the LLM as reference for the current generation. Adding a
+  heading/subheading includes everything nested under it (flattened). Budget is
+  ~400k chars (`REXTBOOKS_CONTEXT_CHARS`) — DeepSeek v4 has a 1M-token window, so
+  half a textbook of context is fine. Per-generation; clears when you pick another block.
+- **Spark (`⚡`)** — cross-breed two blocks. Click **⚡ Spark**, pick exactly two
+  blocks, then choose one of ten modes (Cross-Pollinate, Unified Theory, Contrarian,
+  Socratic Questioning, Temporal Dimension, Scale Shifting, Metaphor Mapping, Missing
+  Node Detection, What If?, Connections Map). Edit the default prompt and generate —
+  a new synthesised subheading + section is inserted next to your current selection.
+- **Diagrams** — content generation is told to add a **Mermaid** code block
+  (```mermaid …```) where a flow / hierarchy / sequence helps. It renders to SVG in
+  the app, the editor preview, and the PDF — centred in a translucent figure that
+  picks up the book's palette. Needs a CDN (mermaid.js); offline it falls back to
+  showing the diagram source. Diagrams are prompted to stay compact (≤~10 nodes,
+  left-to-right for long chains) and are height-capped on render so a big diagram
+  can't overflow a PDF page.
+- **Images in sections** — in the editor, **🖼 Image** → paste, drop, upload a file,
+  or add a link. Files are stored under `books/assets/<bookId>/`.
+- **Export** — **PDF** (15 palettes), **Markdown**, or **JSON** (the raw book file).
+  **Import** a `.json` book from the topbar. Every save also drops a versioned
+  snapshot in `books/.trash/` (auto-pruned to 8) so a bad edit can't lose work —
+  `GET /api/books/<id>/versions`, `POST /api/books/<id>/restore {file}`.
+
+### PDF export
+
+PDF is rendered by a **headless Chrome / Edge / Chromium** browser, if one is
+installed on the machine running the server — no Python package required (Edge
+ships with Windows 11, Chrome/Chromium are common elsewhere). The PDF then looks
+exactly like the on-screen preview: cover page, table of contents with working
+links, and the full palette colour.
+
+Detection is automatic (`GET /health` → `pdfEngine`). Set `REXTBOOKS_CHROME` to a
+browser path to override. As a headless-server alternative you can
+`pip install weasyprint` (needs Pango/cairo) — it's used if no browser is found.
+
+If neither is available, the Export dialog's **PDF** option opens a palette-styled
+print page and you choose *Save as PDF* (enable *Background graphics*).
+**Markdown export always works.**
+
+## How it works
+
+### Backend (Flask)
+
+| File | Role |
+| --- | --- |
+| `app.py` | Routes: pages, book CRUD, SSE generation, render, images, export |
+| `config.py` | Loads `.env`; exposes key / model / base URL |
+| `deepseek.py` | Streaming + plain Chat Completions calls |
+| `prompts.py` | System prompts (RULES vs overridable DEFAULTS), tone/depth, refine, context, templates |
+| `sparks.py` | The ten Spark modes + `build_spark_messages` |
+| `store.py` | Book JSON persistence, per-book asset folders, versioned snapshots, import |
+| `rendering.py` | Shared Markdown → HTML (turns ```mermaid fences into figures) |
+| `images.py` | Validate + store section images (magic-byte sniff, size caps) |
+| `palettes.py` | The 15 export colour palettes |
+| `export.py` | `book_to_markdown` / `book_to_html` / `book_to_pdf` (recursive, any depth) |
+| `pdfgen.py` | Renders a URL to PDF via a headless Chrome/Edge/Chromium |
+
+Books are `books/<id>.json`. The browser owns the tree and PUTs the whole book
+(debounced, serialized autosave); the server just reads/writes files. Set
+`BOOKS_DIR` to keep books elsewhere (tests use this so they never touch `./books`).
+`node` types nest freely: `heading` → `subheading` → `subheading` → … → `section`.
+
+### Frontend (`static/`, no build step — native ES modules)
+
+| File | Role |
+| --- | --- |
+| `js/api.js` | fetch wrappers, SSE reader, image upload, export hrefs |
+| `js/store.js` | in-memory tree, mutations, settings, serialized autosave, pub/sub |
+| `js/prompts.js` | templates, "selected block → mode" mapping, tone/depth lists |
+| `js/block.js` | one block: toolbar, collapse, section render + Markdown editor + image panel |
+| `js/mermaid-render.js` | lazy-loads mermaid.js, renders `pre.mermaid` blocks, themed + cached |
+| `js/tree.js` | recursive render, native drag-and-drop, edit lock |
+| `js/ai-dock.js` | right panel: target, tone/depth, Sub-topics/Content, Replace/Refine, context + Spark, streaming |
+| `js/export-panel.js` | export modal: PDF/MD/JSON + palette swatches |
+| `js/spark-panel.js` | Spark modal: two sources, ten modes, prompt, streaming, node insertion |
+| `js/main.js` | bootstrap, book switching, import |
+| `css/style.css` | mint-green base, translucent teal glass panels, shine + iridescence |
+
+### Node types
+
+`heading` → `subheading` (nests any depth) → `section`. Generating content for a
+subheading creates or updates its single `section` child.
+
+### The AI dock
+
+The **mode** is decided by what block is selected, not by the prompt text:
+
+- nothing selected → **outline** → creates top-level headings
+- a heading selected → **subheadings** → creates subheadings under it
+- a subheading / section selected → **content** → writes/updates the section body
+
+The prompt textarea is pre-filled and editable. Each mode's system prompt in
+`prompts.py` is split into **RULES** (invariants the app depends on — parseable
+list output, section scope, no stray top-level headings; always enforced) and
+**DEFAULTS** (house style — length, structure, how many images/diagrams; the
+editable prompt overrides these). So "add more images than normal" or "make these
+provocative" works, while "also write the next section too" is ignored. Image and
+diagram counts are bounded (≈8 / ≈6) so an over-broad request can't blow up.
+Editing the prompt still can't change which node type a mode creates — that's
+enforced in `app.py`, not the prompt. **Reset** restores the default text.

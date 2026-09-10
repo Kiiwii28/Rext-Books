@@ -1,0 +1,378 @@
+"""Rextbooks - recursive textbook generator.
+
+Run with:
+    python app.py
+Then open http://127.0.0.1:5000
+"""
+
+from __future__ import annotations
+
+import json
+import re
+
+import requests
+from flask import (
+    Flask, Response, jsonify, render_template, request,
+    send_from_directory, stream_with_context,
+)
+from werkzeug.utils import secure_filename
+
+import config
+import deepseek
+import export
+import images
+import palettes
+import prompts
+import sparks
+import store
+from rendering import render_markdown
+
+app = Flask(__name__)
+
+
+def _slug(text: str) -> str:
+    s = re.sub(r"[^\w\- ]+", "", text or "").strip().replace(" ", "-")
+    return s[:60] or "rextbook"
+
+
+# --------------------------------------------------------------------------- #
+#  Pages                                                                       #
+# --------------------------------------------------------------------------- #
+
+@app.get("/")
+def index():
+    return render_template("index.html")
+
+
+@app.get("/health")
+def health():
+    return jsonify({"status": "ok", "model": config.DEEPSEEK_MODEL,
+                    "pdf": export.pdf_available(), "pdfEngine": export.pdf_engine()})
+
+
+@app.post("/render")
+def render():
+    data = request.get_json(silent=True) or {}
+    return jsonify({"html": render_markdown(data.get("text", ""))})
+
+
+@app.get("/api/palettes")
+def api_palettes():
+    return jsonify(palettes.PALETTES)
+
+
+@app.get("/api/spark-modes")
+def api_spark_modes():
+    return jsonify(sparks.modes_summary())
+
+
+# --------------------------------------------------------------------------- #
+#  Books CRUD                                                                  #
+# --------------------------------------------------------------------------- #
+
+@app.get("/api/books")
+def api_list_books():
+    return jsonify(store.list_books())
+
+
+@app.post("/api/books")
+def api_create_book():
+    data = request.get_json(silent=True) or {}
+    topic = (data.get("topic") or "").strip()
+    title = (data.get("title") or "").strip()
+    if not topic and not title:
+        return jsonify({"error": "topic is required"}), 400
+    return jsonify(store.create_book(topic=topic, title=title)), 201
+
+
+@app.post("/api/books/import")
+def api_import_book():
+    if "file" in request.files:
+        try:
+            data = json.loads(request.files["file"].read().decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            return jsonify({"error": "not valid JSON"}), 400
+    else:
+        data = request.get_json(silent=True)
+    try:
+        return jsonify(store.import_book(data)), 201
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.get("/api/books/<book_id>")
+def api_get_book(book_id: str):
+    book = store.get_book(book_id)
+    if book is None:
+        return jsonify({"error": "not found"}), 404
+    return jsonify(book)
+
+
+@app.route("/api/books/<book_id>", methods=["PUT", "POST"])  # POST = sendBeacon fallback
+def api_save_book(book_id: str):
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "invalid body"}), 400
+    try:
+        return jsonify(store.save_book(book_id, data))
+    except KeyError:
+        return jsonify({"error": "not found"}), 404
+
+
+@app.delete("/api/books/<book_id>")
+def api_delete_book(book_id: str):
+    return jsonify({"deleted": store.delete_book(book_id)})
+
+
+@app.get("/api/books/<book_id>/versions")
+def api_book_versions(book_id: str):
+    try:
+        return jsonify(store.list_versions(book_id))
+    except ValueError:
+        return jsonify({"error": "bad id"}), 400
+
+
+@app.post("/api/books/<book_id>/restore")
+def api_restore_version(book_id: str):
+    data = request.get_json(silent=True) or {}
+    try:
+        return jsonify(store.restore_version(book_id, data.get("file", "")))
+    except (KeyError, ValueError):
+        return jsonify({"error": "version not found"}), 404
+
+
+# --------------------------------------------------------------------------- #
+#  Images                                                                      #
+# --------------------------------------------------------------------------- #
+
+@app.post("/api/books/<book_id>/images")
+def api_upload_image(book_id: str):
+    if store.get_book(book_id) is None:
+        return jsonify({"error": "book not found"}), 404
+    try:
+        if "image" in request.files:
+            data = request.files["image"].read()
+        else:
+            body = request.get_json(silent=True) or {}
+            if body.get("dataUrl"):
+                data = images.decode_data_url(body["dataUrl"])
+            elif body.get("url"):
+                fetched = images.fetch_remote(body["url"])
+                if fetched is None:
+                    # keep the external reference as-is
+                    url = body["url"].strip()
+                    return jsonify({"url": url, "markdown": f"![]({url})", "external": True})
+                data = fetched
+            else:
+                return jsonify({"error": "no image, dataUrl or url provided"}), 400
+        return jsonify(images.save_image(book_id, data))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.get("/assets/<book_id>/<path:filename>")
+def serve_asset(book_id: str, filename: str):
+    try:
+        directory = store.assets_dir(book_id)
+    except ValueError:
+        return jsonify({"error": "bad id"}), 400
+    return send_from_directory(directory, secure_filename(filename))
+
+
+# --------------------------------------------------------------------------- #
+#  Export                                                                      #
+# --------------------------------------------------------------------------- #
+
+@app.get("/api/books/<book_id>/export.json")
+def export_json(book_id: str):
+    book = store.get_book(book_id)
+    if book is None:
+        return jsonify({"error": "not found"}), 404
+    return Response(json.dumps(book, ensure_ascii=False, indent=2),
+                    mimetype="application/json; charset=utf-8", headers={
+        "Content-Disposition": f'attachment; filename="{_slug(book.get("title"))}.json"',
+    })
+
+
+@app.get("/api/books/<book_id>/export.md")
+def export_md(book_id: str):
+    book = store.get_book(book_id)
+    if book is None:
+        return jsonify({"error": "not found"}), 404
+    md = export.book_to_markdown(book, base_url=request.url_root)
+    return Response(md, mimetype="text/markdown; charset=utf-8", headers={
+        "Content-Disposition": f'attachment; filename="{_slug(book.get("title"))}.md"',
+    })
+
+
+@app.get("/api/books/<book_id>/export.pdf")
+def export_pdf(book_id: str):
+    book = store.get_book(book_id)
+    if book is None:
+        return jsonify({"error": "not found"}), 404
+    if not export.pdf_available():
+        return jsonify({"error": export.pdf_error()}), 501
+    palette = request.args.get("palette") or (book.get("settings") or {}).get("palette")
+    pdf = export.book_to_pdf(book, palette, base_url=request.url_root)
+    return Response(pdf, mimetype="application/pdf", headers={
+        "Content-Disposition": f'attachment; filename="{_slug(book.get("title"))}.pdf"',
+    })
+
+
+@app.get("/api/books/<book_id>/preview")
+def export_preview(book_id: str):
+    book = store.get_book(book_id)
+    if book is None:
+        return jsonify({"error": "not found"}), 404
+    palette = request.args.get("palette") or (book.get("settings") or {}).get("palette")
+    html_doc = export.book_to_html(book, palette)
+    if request.args.get("print"):
+        # Browser "Save as PDF" fallback. Wait for Mermaid (if any) before printing.
+        wait = (
+            "<script>(function(){function go(){setTimeout(function(){window.print();},250);}"
+            "if(document.querySelector('pre.mermaid')){var n=0;var t=setInterval(function(){"
+            "if(document.body.dataset.mermaidDone||n++>40){clearInterval(t);go();}},150);}"
+            "else{window.addEventListener('load',go);}})();</script>"
+        )
+        html_doc = html_doc.replace("</body>", wait + "</body>")
+    return html_doc
+
+
+# --------------------------------------------------------------------------- #
+#  AI generation (SSE stream)                                                  #
+# --------------------------------------------------------------------------- #
+
+def _sse(event: str, data: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _collect_context(book: dict, ids: list, *, exclude=None) -> list[str]:
+    """Flatten the nodes the user picked as extra context, within the budget."""
+    blocks: list[str] = []
+    budget = config.CONTEXT_CHAR_BUDGET
+    for cid in (ids or [])[:40]:
+        cnode, _cp = store.find_node(book.get("nodes", []), cid)
+        if cnode is None or cnode is exclude or budget <= 0:
+            continue
+        text = store.node_as_text(cnode, limit=budget)
+        if not text:
+            continue
+        label = (cnode.get("title") or cnode.get("type") or "context").strip()
+        block = f"[{cnode.get('type', 'node')}] {label}\n\n{text}"
+        blocks.append(block)
+        budget -= len(block)
+    return blocks
+
+
+def _stream_chat_response(messages: list[dict], start_payload: dict) -> Response:
+    """Shared SSE wrapper for /api/ai/generate and /api/ai/spark."""
+    @stream_with_context
+    def generate():
+        yield _sse("start", start_payload)
+        try:
+            for piece in deepseek.stream_chat(messages):
+                yield _sse("delta", {"text": piece})
+            yield _sse("done", {})
+        except requests.HTTPError as exc:
+            yield _sse("error", {"message": str(exc)})
+        except requests.RequestException as exc:
+            yield _sse("error", {"message": f"network error: {exc}"})
+        except RuntimeError as exc:  # missing API key etc.
+            yield _sse("error", {"message": str(exc)})
+
+    return Response(generate(), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.post("/api/ai/generate")
+def api_generate():
+    body = request.get_json(silent=True) or {}
+    mode = body.get("mode")
+    book_id = body.get("bookId")
+    node_id = body.get("nodeId")
+    user_prompt = (body.get("prompt") or "").strip()
+    tone = body.get("tone")
+    depth = body.get("depth")
+    refine = bool(body.get("refine"))
+    context_ids = body.get("contextIds") or []
+
+    if mode not in prompts.MODES:
+        return jsonify({"error": f"mode must be one of {prompts.MODES}"}), 400
+    if not user_prompt:
+        return jsonify({"error": "prompt is required"}), 400
+
+    book = store.get_book(book_id) if book_id else None
+    if book is None:
+        return jsonify({"error": "book not found"}), 404
+
+    node, _parent = (None, None)
+    if node_id:
+        node, _parent = store.find_node(book.get("nodes", []), node_id)
+
+    if mode == "subheadings" and node is None:
+        return jsonify({"error": "select a heading first"}), 400
+    if mode == "content" and node is None:
+        return jsonify({"error": "select a subheading first"}), 400
+
+    # For "refine", feed the existing section text back to the model.
+    refine_source = None
+    if mode == "content" and refine and node is not None:
+        if node.get("type") == "section":
+            refine_source = node.get("content") or ""
+        else:
+            sec = next((c for c in node.get("children", []) if c.get("type") == "section"), None)
+            refine_source = (sec or {}).get("content") or ""
+        if not refine_source.strip():
+            refine_source = None
+
+    # Extra context: other nodes the user picked, flattened to text.
+    context_blocks = _collect_context(book, context_ids, exclude=node)
+
+    messages = prompts.build_messages(
+        mode, user_prompt, tone=tone, depth=depth, refine_source=refine_source,
+        context_blocks=context_blocks,
+    )
+    return _stream_chat_response(messages, {
+        "mode": mode, "refine": refine_source is not None, "context": len(context_blocks),
+    })
+
+
+@app.post("/api/ai/spark")
+def api_spark():
+    body = request.get_json(silent=True) or {}
+    book_id = body.get("bookId")
+    spark_mode = body.get("sparkMode")
+    a_id, b_id = body.get("aId"), body.get("bId")
+    user_prompt = (body.get("prompt") or "").strip()
+
+    if spark_mode not in sparks.SPARK_MODES:
+        return jsonify({"error": "unknown spark mode"}), 400
+    if not user_prompt:
+        return jsonify({"error": "prompt is required"}), 400
+
+    book = store.get_book(book_id) if book_id else None
+    if book is None:
+        return jsonify({"error": "book not found"}), 404
+
+    a_node, _ = store.find_node(book.get("nodes", []), a_id)
+    b_node, _ = store.find_node(book.get("nodes", []), b_id)
+    if a_node is None or b_node is None:
+        return jsonify({"error": "pick two blocks from this book"}), 400
+
+    half = max(2000, config.CONTEXT_CHAR_BUDGET // 2)
+    settings = book.get("settings") or {}
+    messages = sparks.build_spark_messages(
+        spark_mode, user_prompt,
+        store.node_as_text(a_node, limit=half),
+        store.node_as_text(b_node, limit=half),
+        a_title=a_node.get("title") or "A",
+        b_title=b_node.get("title") or "B",
+        tone=settings.get("tone"), depth=settings.get("depth"),
+    )
+    return _stream_chat_response(messages, {"mode": "spark", "sparkMode": spark_mode})
+
+
+if __name__ == "__main__":
+    # threaded=True so the preview / asset endpoints stay responsive while an
+    # SSE generation stream is in flight (and so PDF export can fetch /assets).
+    app.run(host="127.0.0.1", port=5000, debug=True, threaded=True)
