@@ -7,6 +7,7 @@ import { setEditLock } from "./tree.js";
 import { renderMermaidIn } from "./mermaid-render.js";
 
 const TYPE_LABEL = { heading: "Heading", subheading: "Subheading", section: "Section" };
+const EDITOR_HEIGHT_KEY = "rextbooks:editorHeight";   // remembered manual editor height, in px
 
 const esc = (s) => String(s).replace(/[&<>"]/g,
   (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -223,7 +224,8 @@ export function createBlock(node, { selectedId, onChange, context }) {
 
   // ---- section editor -------------------------------------------------
   function openEditor() {
-    if (pick || node.type !== "section" || wrap.querySelector(".b-section-edit")) return;
+    if (pick || node.type !== "section" || wrap.dataset.editing) return;
+    wrap.dataset.editing = "1";
     setEditLock(true);
     body.hidden = true;
 
@@ -234,18 +236,31 @@ export function createBlock(node, { selectedId, onChange, context }) {
         <button class="b-tool" data-act="image" title="Insert an image">🖼&nbsp;Image</button>
         <span class="b-edit-hint">Markdown — you can also paste an image straight in</span>
         <span class="flex"></span>
+        <button class="b-tool" data-act="fullscreen" title="Expand editor">⛶</button>
         <button class="btn ghost sm" data-act="cancel">Cancel</button>
         <button class="btn primary sm" data-act="done">Done</button>
       </div>
       <div class="b-image-panel" hidden></div>
       <textarea class="b-section-editor" spellcheck="true"></textarea>
+      <div class="b-resize-handle" tabindex="0" role="separator" aria-orientation="horizontal"
+           aria-label="Resize editor" title="Drag to resize · double-click to reset"></div>
       <div class="b-edit-preview markdown-body"></div>`;
 
     const ta = ed.querySelector(".b-section-editor");
     const preview = ed.querySelector(".b-edit-preview");
     const imagePanel = ed.querySelector(".b-image-panel");
+    const resizeHandle = ed.querySelector(".b-resize-handle");
+    const fsBtn = ed.querySelector('[data-act="fullscreen"]');
     ta.value = node.content || "";
-    autosize(ta);
+
+    // A manually-chosen height (drag, or remembered from last time) sticks —
+    // typing no longer snaps it back to the auto-fit size.
+    let manualHeight = readSavedHeight();
+    if (manualHeight) ta.style.height = manualHeight + "px";
+    else autosize(ta);
+
+    let fullscreen = false;
+    let backdrop = null;
 
     let t;
     const refreshPreview = () => {
@@ -253,7 +268,10 @@ export function createBlock(node, { selectedId, onChange, context }) {
       t = setTimeout(() => renderInto(preview, ta.value), 300);
     };
     refreshPreview();
-    ta.addEventListener("input", () => { autosize(ta); refreshPreview(); });
+    ta.addEventListener("input", () => {
+      if (manualHeight == null) autosize(ta);
+      refreshPreview();
+    });
 
     ta.addEventListener("paste", (e) => {
       const file = [...(e.clipboardData?.items || [])]
@@ -263,10 +281,71 @@ export function createBlock(node, { selectedId, onChange, context }) {
       uploadAndInsert({ file }, ta);
     });
 
+    // ---- drag-to-resize the textarea's height ----------------------------
+    function maxHeight() { return Math.max(window.innerHeight - 200, 300); }
+    function setHeight(px) {
+      manualHeight = Math.min(Math.max(px, 120), maxHeight());
+      ta.style.height = manualHeight + "px";
+      try { localStorage.setItem(EDITOR_HEIGHT_KEY, String(Math.round(manualHeight))); } catch {}
+    }
+    resizeHandle.addEventListener("pointerdown", (e) => {
+      if (fullscreen) return;
+      e.preventDefault();
+      const startY = e.clientY;
+      const startH = ta.getBoundingClientRect().height;
+      resizeHandle.setPointerCapture(e.pointerId);
+      document.body.classList.add("is-resizing-y");
+      const onMove = (ev) => setHeight(startH + (ev.clientY - startY));
+      const onUp = () => {
+        resizeHandle.releasePointerCapture(e.pointerId);
+        document.body.classList.remove("is-resizing-y");
+        resizeHandle.removeEventListener("pointermove", onMove);
+        resizeHandle.removeEventListener("pointerup", onUp);
+        resizeHandle.removeEventListener("pointercancel", onUp);
+      };
+      resizeHandle.addEventListener("pointermove", onMove);
+      resizeHandle.addEventListener("pointerup", onUp);
+      resizeHandle.addEventListener("pointercancel", onUp);
+    });
+    resizeHandle.addEventListener("dblclick", () => {
+      manualHeight = null;
+      try { localStorage.removeItem(EDITOR_HEIGHT_KEY); } catch {}
+      autosize(ta);
+    });
+    resizeHandle.addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+      e.preventDefault();
+      setHeight(ta.getBoundingClientRect().height + (e.key === "ArrowDown" ? 24 : -24));
+    });
+
+    // ---- fullscreen: a lot more room, for longer or fiddlier edits -------
+    // Panes use `backdrop-filter` (the "glass" look), which makes them a
+    // containing block for `position: fixed` descendants — so the editor has
+    // to actually move to <body> while fullscreen, not just gain a class,
+    // or it ends up pinned inside the (blurred) pane instead of the viewport.
+    function setFullscreen(on) {
+      fullscreen = on;
+      ed.classList.toggle("is-fullscreen", on);
+      fsBtn.classList.toggle("active", on);
+      fsBtn.title = on ? "Collapse editor" : "Expand editor";
+      if (on) {
+        backdrop = document.createElement("div");
+        backdrop.className = "b-edit-fs-backdrop";
+        backdrop.addEventListener("click", () => setFullscreen(false));
+        document.body.append(backdrop, ed);
+      } else {
+        backdrop?.remove();
+        backdrop = null;
+        body.parentNode.insertBefore(ed, body.nextSibling);   // back to its spot in the tree
+      }
+      ta.focus();
+    }
+
     ed.querySelector(".b-edit-bar").addEventListener("click", (e) => {
       const act = e.target.closest("[data-act]")?.dataset.act;
       if (act === "done") close(ta.value);
       else if (act === "cancel") close(null);
+      else if (act === "fullscreen") setFullscreen(!fullscreen);
       else if (act === "image") {
         imagePanel.hidden = !imagePanel.hidden;
         if (!imagePanel.hidden && !imagePanel.dataset.built) {
@@ -276,11 +355,14 @@ export function createBlock(node, { selectedId, onChange, context }) {
       }
     });
     ta.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") { e.preventDefault(); close(null); }
+      if (e.key === "Escape") { e.preventDefault(); fullscreen ? setFullscreen(false) : close(null); }
       if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); close(ta.value); }
     });
 
     function close(value) {
+      backdrop?.remove();
+      ed.remove();   // detach whether it's still in the tree or parked in <body> (fullscreen)
+      delete wrap.dataset.editing;
       if (value !== null && value !== node.content) store.setContent(node.id, value);
       setEditLock(false);   // re-renders the tree from the store
     }
@@ -372,14 +454,22 @@ function insertAtCaret(ta, text) {
   ta.value = before + lead + text + trail + after;
   const pos = (before + lead + text).length;
   ta.selectionStart = ta.selectionEnd = pos;
-  ta.dispatchEvent(new Event("input"));
-  autosize(ta);
+  ta.dispatchEvent(new Event("input"));   // re-renders the preview; resizes unless the user set a manual height
   ta.focus();
 }
 
 function autosize(ta) {
   ta.style.height = "auto";
   ta.style.height = Math.min(640, Math.max(160, ta.scrollHeight + 4)) + "px";
+}
+
+function readSavedHeight() {
+  try {
+    const v = parseInt(localStorage.getItem(EDITOR_HEIGHT_KEY) || "", 10);
+    return Number.isFinite(v) && v >= 120 ? v : null;
+  } catch {
+    return null;
+  }
 }
 
 function toolBtn(glyph, title, onClick) {

@@ -6,10 +6,14 @@
   <title>Rextbooks · Recursive Textbooks</title>
   <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}" />
   <script>
-    // apply the saved theme before first paint (no flash)
+    // apply the saved theme + panel width before first paint (no flash)
     try {
       var t = localStorage.getItem("rextbooks:theme");
       if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+    } catch (e) {}
+    try {
+      var w = localStorage.getItem("rextbooks:aiPaneWidth");
+      if (w) document.documentElement.style.setProperty("--ai-pane-w", w + "px");
     } catch (e) {}
   </script>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
@@ -64,6 +68,9 @@
         </form>
       </div>
     </section>
+
+    <div id="pane-resizer" class="pane-resizer" role="separator" aria-orientation="vertical"
+         aria-label="Resize outline and AI assistant panels" tabindex="0" title="Drag to resize · double-click to reset"></div>
 
     <aside class="pane ai-pane glass" aria-label="AI assistant">
       <div class="pane-header">

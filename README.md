@@ -45,11 +45,16 @@ Open <http://127.0.0.1:5000>.
 - **Recursive generation** — outline → subheadings → section content, each step a
   streamed DeepSeek call scoped to the selected block.
 - **Notion-style blocks** — drag to reorder, collapse, add, delete, rename inline.
+- **Resizable panels** — drag the divider between the Outline and AI Assistant
+  panels to resize; double-click it to reset. Remembered across reloads.
 - **Recurse (`↳`)** — add a nested sub-topic under any heading/subheading, so trees
   go arbitrarily deep. On a subheading with sub-topics the dock offers a
   **Sub-topics / Content** toggle.
 - **Edit section text** — click ✎ on a section for an in-place Markdown editor with
-  live preview (`Ctrl/Cmd+Enter` = Done, `Esc` = cancel).
+  live preview (`Ctrl/Cmd+Enter` = Done, first `Esc` = cancel). Drag the handle below
+  the textarea to resize it (sticks — typing won't snap it back, and the size is
+  remembered next time); **⛶** expands the whole editor to fill the screen for
+  longer edits (`Esc` exits fullscreen first, a second `Esc` cancels).
 - **Reprompt a section** — ↻ on a section, or just select it. When a section already
   has text the dock shows **Replace** (fresh) / **Refine** (revise the current draft).
 - **Prompt tags** — pick a **tone** (Technical / Academic / Blog / Conversational /

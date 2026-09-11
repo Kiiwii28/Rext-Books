@@ -6,6 +6,7 @@ import { mountTree, renderTree } from "./tree.js";
 import { mountDock, updateDock } from "./ai-dock.js";
 import { mountExport } from "./export-panel.js";
 import { mountSpark, updateSpark } from "./spark-panel.js";
+import { mountPaneResizer } from "./resize.js";
 
 const $ = (id) => document.getElementById(id);
 const LAST_BOOK = "rextbooks:lastBook";
@@ -76,6 +77,7 @@ mountTree(els.tree, { onSelect: (id) => store.select(id) });
 mountDock(dockEls);
 mountExport(exportEls);
 mountSpark(sparkEls);
+mountPaneResizer();
 
 els.tree.addEventListener("click", (e) => {
   if (e.target === els.tree && !store.getPickMode()) store.select(null);
