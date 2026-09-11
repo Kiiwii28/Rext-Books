@@ -130,13 +130,19 @@ DEFAULT_TEMPLATES = {
         "under {count} main headings."
     ),
     "subheadings": (
-        'Please create {count} subheadings for "{title}" in a textbook on "{topic}".'
+        'Please create {count} subheadings for "{title}"{under} in a textbook on "{topic}".'
     ),
     "content": (
-        'Please write the textbook content for the subsection "{title}" '
-        '(part of "{parent_title}") in a textbook on "{topic}".'
+        'Please write the textbook content for the subsection "{title}"{under} '
+        'in a textbook on "{topic}".'
     ),
 }
+
+
+def _under_clause(ancestors: list[str] | None) -> str:
+    """`` (nested under "A" › "B")`` for the chain of titles above this node."""
+    crumbs = " › ".join(f'"{a.strip()}"' for a in (ancestors or []) if a and a.strip())
+    return f" (nested under {crumbs})" if crumbs else ""
 
 
 _REFINE_RULES = (
@@ -181,10 +187,10 @@ def build_messages(mode: str, user_prompt: str, *, tone: str | None = None,
 
 
 def default_prompt(mode: str, *, topic: str = "", title: str = "",
-                   parent_title: str = "", count: int = 3) -> str:
+                   ancestors: list[str] | None = None, count: int = 3) -> str:
     return DEFAULT_TEMPLATES[mode].format(
         topic=topic or "this topic",
         title=title or "this section",
-        parent_title=parent_title or "this chapter",
+        under=_under_clause(ancestors),
         count=count,
     )

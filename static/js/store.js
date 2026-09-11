@@ -4,11 +4,12 @@ import { saveBook } from "./api.js";
 
 const listeners = new Set();
 // Ephemeral "pick" state — never saved to the book.
-//   pickMode:  null | "context" | "spark"
+//   pickMode:  null | "context" | "spark" | "bulk"
 const emptyPick = () => ({
   pickMode: null,
   contextIds: [], contextTarget: null,   // extra context for the next generation
   sparkIds: [], sparkAnchor: null, sparkModalOpen: false,  // Spark cross-breed
+  bulkIds: [], bulkType: null, bulkParent: null,  // bulk-generate over siblings
 });
 let state = {
   book: null,          // { id, title, topic, nodes: [...] }
@@ -65,17 +66,30 @@ export function select(id) {
 export const getPickMode = () => state.pickMode;
 export const isContextPick = () => state.pickMode === "context";
 export const isSparkPick = () => state.pickMode === "spark";
+export const isBulkPick = () => state.pickMode === "bulk";
 
 export const getContextIds = () => state.contextIds;
 export const getContextTarget = () => state.contextTarget;
 export const getSparkIds = () => state.sparkIds;
 export const getSparkAnchor = () => state.sparkAnchor;
 export const isSparkModalOpen = () => state.sparkModalOpen;
+export const getBulkIds = () => state.bulkIds;
+export const getBulkType = () => state.bulkType;
+
+// Spark is a standalone flow (pick exactly two nodes, open a modal); it's
+// mutually exclusive with context/bulk picking. Context and bulk, though, are
+// meant to be used together — you can add context *for* a bulk run, and even
+// tick the blocks being bulk-generated as context for one another — so
+// switching between those two pickers preserves both selections.
+const clearSpark = () => ({ sparkIds: [], sparkAnchor: null, sparkModalOpen: false });
 
 export function startContextPick(targetId) {
   const on = state.pickMode !== "context";
-  state = { ...state, ...emptyPick(), pickMode: on ? "context" : null,
-            contextIds: on ? state.contextIds : [], contextTarget: targetId ?? null };
+  state = {
+    ...state, ...clearSpark(),
+    pickMode: on ? "context" : (state.bulkIds.length ? "bulk" : null),
+    contextTarget: on ? (targetId ?? null) : null,
+  };
   emit();
 }
 
@@ -86,22 +100,101 @@ export function startSparkPick(anchorId) {
   emit();
 }
 
+/** Enter (or leave) bulk-generate pick mode. Keeps any picked context, and
+ *  returns to the context picker on exit if one was queued up too. */
+export function startBulkPick() {
+  const on = state.pickMode !== "bulk";
+  state = {
+    ...state, ...clearSpark(),
+    pickMode: on ? "bulk" : (state.contextIds.length ? "context" : null),
+  };
+  emit();
+}
+
+/** Close whichever picker is open. Context/bulk/spark selections are kept —
+ *  they're consumed (and cleared) by whatever runs the generation. */
 export function endPick() {
   if (!state.pickMode) return;
   state = { ...state, pickMode: null };
   emit();
 }
 
+/** Drop the bulk queue (after it's been run, or if the user abandons it). */
+export function clearBulk() {
+  state = { ...state, bulkIds: [], bulkType: null, bulkParent: null,
+            pickMode: state.pickMode === "bulk" ? null : state.pickMode };
+  emit();
+}
+
+export function removeBulk(id) {
+  const ids = state.bulkIds.filter((x) => x !== id);
+  state = { ...state, bulkIds: ids,
+            bulkType: ids.length ? state.bulkType : null,
+            bulkParent: ids.length ? state.bulkParent : null };
+  emit();
+}
+
 export function toggleContext(id) {
   if (!id || id === state.contextTarget) return;
+  const hit = findNode(id);
+  if (!hit) return;
+  // Ticking a node ticks its whole subtree; unticking removes the subtree too.
+  const affected = [id];
+  walk(hit.node.children || [], (n) => affected.push(n.id));
   const set = new Set(state.contextIds);
-  set.has(id) ? set.delete(id) : set.add(id);
+  const turningOn = !set.has(id);
+  for (const x of affected) {
+    if (x === state.contextTarget) continue;
+    turningOn ? set.add(x) : set.delete(x);
+  }
   state = { ...state, contextIds: [...set] };
   emit();
 }
 
 export function removeContext(id) {
-  state = { ...state, contextIds: state.contextIds.filter((x) => x !== id) };
+  const hit = findNode(id);
+  const drop = new Set([id]);
+  if (hit) walk(hit.node.children || [], (n) => drop.add(n.id));
+  state = { ...state, contextIds: state.contextIds.filter((x) => !drop.has(x)) };
+  emit();
+}
+
+/** The picked context nodes whose parent isn't also picked — for tidy chips. */
+export function contextRootIds() {
+  const set = new Set(state.contextIds);
+  return state.contextIds.filter(
+    (id) => !pathTo(id).slice(0, -1).some((a) => set.has(a.id)),
+  );
+}
+
+/** Toggle a node in the bulk set. Constrained to siblings of one type. */
+export function toggleBulk(id) {
+  if (!id) return;
+  const hit = findNode(id);
+  if (!hit) return;
+  const set = new Set(state.bulkIds);
+  if (set.has(id)) {
+    set.delete(id);
+  } else {
+    if (state.bulkIds.length) {
+      const first = findNode(state.bulkIds[0]);
+      const sameType = first && first.node.type === hit.node.type;
+      const sameParent = (first?.parent?.id ?? null) === (hit.parent?.id ?? null);
+      if (!sameType || !sameParent) return;
+    }
+    set.add(id);
+  }
+  let ids = [...set];
+  const anchor = ids.length ? findNode(ids[0]) : null;
+  if (anchor) {
+    const order = anchor.siblings.map((n) => n.id);
+    ids.sort((a, b) => order.indexOf(a) - order.indexOf(b));
+  }
+  state = {
+    ...state, bulkIds: ids,
+    bulkType: anchor ? anchor.node.type : null,
+    bulkParent: anchor ? (anchor.parent?.id ?? null) : null,
+  };
   emit();
 }
 

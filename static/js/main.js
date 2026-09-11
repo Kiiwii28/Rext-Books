@@ -34,7 +34,10 @@ const dockEls = {
   subModeRow: $("ai-submode-row"),
   addContextBtn: $("btn-add-context"),
   sparkBtn: $("btn-spark"),
+  bulkBtn: $("btn-bulk"),
   contextChips: $("ai-context-chips"),
+  bulkQueue: $("ai-bulk-queue"),
+  bulkChips: $("ai-bulk-chips"),
   prompt: $("ai-prompt"),
   generateBtn: $("btn-generate"),
   stopBtn: $("btn-stop"),
@@ -89,18 +92,25 @@ function paintPickBanner(state) {
   const pm = state.pickMode;
   pickBanner.hidden = !pm;
   pickBanner.classList.toggle("spark", pm === "spark");
+  pickBanner.classList.toggle("bulk", pm === "bulk");
   if (!pm) return;
   if (pm === "spark") {
     const n = state.sparkIds.length;
     pickBannerText.textContent = n < 2
       ? `Pick ${2 - n} more block${2 - n > 1 ? "s" : ""} to Spark`
       : "Two blocks picked — opening Spark…";
+  } else if (pm === "bulk") {
+    const n = state.bulkIds.length;
+    pickBannerText.textContent = n < 1
+      ? "Pick sibling blocks to generate in one batch"
+      : `${n} block${n > 1 ? "s" : ""} picked — add more siblings, or ＋ Add context, then hit Generate`;
   } else {
     const t = state.contextTarget ? store.findNode(state.contextTarget)?.node : null;
-    const name = t ? `"${t.title || "(untitled)"}"` : "the outline";
+    const name = t ? `"${t.title || "(untitled)"}"` : state.bulkIds.length ? "the bulk queue" : "the outline";
     const n = state.contextIds.length;
     pickBannerText.textContent =
-      `Pick blocks to use as context for ${name}` + (n ? ` — ${n} selected` : "");
+      `Pick blocks for context (a parent selects its children) for ${name}` +
+      (n ? ` — ${n} selected` : "");
   }
 }
 

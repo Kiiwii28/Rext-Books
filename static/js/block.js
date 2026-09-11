@@ -64,6 +64,7 @@ export function createBlock(node, { selectedId, onChange, context }) {
 
   const pick = context && context.pick;
   if (pick && context.picked) wrap.classList.add(context.mode === "spark" ? "is-spark" : "is-context");
+  if (pick && context.mode === "bulk" && context.picked) wrap.classList.add("is-bulk");
   if (pick && context.isTarget) wrap.classList.add("is-context-target");
 
   const hasChildren = (node.children || []).length > 0;
@@ -84,6 +85,7 @@ export function createBlock(node, { selectedId, onChange, context }) {
   chevron.textContent = "▸";
   chevron.title = node.collapsed ? "Expand" : "Collapse";
   if (!canHaveChildren) chevron.classList.add("is-hidden");
+  if (hasChildren) chevron.classList.add("has-content");
   chevron.addEventListener("click", (e) => {
     e.stopPropagation();
     store.toggleCollapse(node.id);
@@ -100,8 +102,13 @@ export function createBlock(node, { selectedId, onChange, context }) {
     checkbox.disabled = !!context.disabled;
     checkbox.title = context.isTarget
       ? "This is the block you're generating on"
-      : context.disabled ? "Spark takes exactly two blocks"
-      : (context.mode === "spark" ? "Pick for Spark" : "Use as context");
+      : context.disabled
+        ? (context.mode === "spark" ? "Spark takes exactly two blocks"
+           : context.mode === "bulk" ? "Bulk generate needs siblings of the same kind"
+           : "Use as context")
+      : context.mode === "spark" ? "Pick for Spark"
+      : context.mode === "bulk" ? "Include in bulk generation"
+      : "Use as context";
     checkbox.addEventListener("click", (e) => e.stopPropagation());
     checkbox.addEventListener("change", () => context.toggle(node.id));
   }

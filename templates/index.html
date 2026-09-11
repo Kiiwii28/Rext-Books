@@ -109,12 +109,18 @@
           </div>
         </div>
 
+        <div class="ai-bulk-queue" id="ai-bulk-queue" hidden>
+          <span class="ai-tag-label">Bulk queue <span class="hint">— generated one at a time</span></span>
+          <div id="ai-bulk-chips" class="ai-context-chips"></div>
+        </div>
+
         <div class="ai-context">
           <div class="ai-context-head">
             <span class="ai-tag-label">Extra context</span>
             <div class="ai-context-btns">
               <button id="btn-add-context" class="btn ghost sm">＋ Add context</button>
               <button id="btn-spark" class="btn ghost sm" title="Cross-breed two blocks">⚡ Spark</button>
+              <button id="btn-bulk" class="btn ghost sm" title="Generate several sibling blocks, one request each">⧉ Bulk</button>
             </div>
           </div>
           <div id="ai-context-chips" class="ai-context-chips" hidden></div>

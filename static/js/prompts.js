@@ -7,9 +7,9 @@ export const TEMPLATES = {
   outline:
     'Please create an outline for a textbook on the topic of "{topic}" under {count} main headings.',
   subheadings:
-    'Please create {count} subheadings for "{title}" in a textbook on "{topic}".',
+    'Please create {count} subheadings for "{title}"{under} in a textbook on "{topic}".',
   content:
-    'Please write the textbook content for the subsection "{title}" (part of "{parentTitle}") in a textbook on "{topic}".',
+    'Please write the textbook content for the subsection "{title}"{under} in a textbook on "{topic}".',
 };
 
 export const COUNT_LABEL = {
@@ -52,22 +52,26 @@ export function hasSubTopics(node) {
 
 export function fillTemplate(mode, { topic, count, selectedId }) {
   const chain = selectedId ? pathTo(selectedId) : [];
-  const node = chain[chain.length - 1];
-  let title = "", parentTitle = "";
-  if (mode === "subheadings" && node) title = node.title;
-  if (mode === "content") {
-    if (node?.type === "section") {
-      title = chain[chain.length - 2]?.title || node.title;
-      parentTitle = chain[chain.length - 3]?.title || "";
-    } else if (node) {
-      title = node.title;
-      parentTitle = chain[chain.length - 2]?.title || "";
-    }
-  }
+  const last = chain[chain.length - 1];
+
+  // Which node the generation is *about*, and everything above it in the tree.
+  // For content on a section block, that's the parent subheading.
+  let aboutIdx = chain.length - 1;
+  if (mode === "content" && last?.type === "section") aboutIdx -= 1;
+  const about = chain[aboutIdx] || null;
+  const ancestors = chain
+    .slice(0, Math.max(0, aboutIdx))
+    .map((n) => (n.title || "").trim())
+    .filter(Boolean);
+
+  const title = (about?.title || "").trim();
+  const crumbs = ancestors.map((t) => `"${t}"`).join(" › ");
+  const under = crumbs ? ` (nested under ${crumbs})` : "";
+
   return TEMPLATES[mode]
     .replaceAll("{topic}", topic || "this topic")
     .replaceAll("{title}", title || "this section")
-    .replaceAll("{parentTitle}", parentTitle || "this chapter")
+    .replaceAll("{under}", under)
     .replaceAll("{count}", count);
 }
 

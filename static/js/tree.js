@@ -46,20 +46,26 @@ export function renderTree(state) {
   }
   pendingRerender = null;
 
-  const pm = state.pickMode;  // null | "context" | "spark"
+  const pm = state.pickMode;  // null | "context" | "spark" | "bulk"
   container.classList.toggle("pick-mode", !!pm);
   container.dataset.pick = pm || "";
   container.innerHTML = "";
   if (!book || !book.nodes.length) return;
 
+  const pickedIds = pm === "spark" ? state.sparkIds
+    : pm === "bulk" ? state.bulkIds
+    : state.contextIds || [];
   const ctx = {
     mode: pm,
-    picked: new Set(pm === "spark" ? state.sparkIds : state.contextIds || []),
+    picked: new Set(pickedIds),
     target: pm === "context" ? state.contextTarget : null,
     full: pm === "spark" && state.sparkIds.length >= 2,
+    bulkType: state.bulkType,
+    bulkParent: state.bulkParent,
+    bulkLocked: pm === "bulk" && state.bulkIds.length > 0,
   };
   const frag = document.createDocumentFragment();
-  for (const node of book.nodes) frag.append(renderNode(node, state.selectedId, ctx));
+  for (const node of book.nodes) frag.append(renderNode(node, state.selectedId, ctx, null));
   container.append(frag);
 
   const pe = store.getPendingEdit();
@@ -69,8 +75,17 @@ export function renderTree(state) {
   }
 }
 
-function renderNode(node, selectedId, ctx) {
+function renderNode(node, selectedId, ctx, parentId = null) {
   const picked = ctx.picked.has(node.id);
+
+  let disabled = false;
+  if (ctx.mode === "context") disabled = node.id === ctx.target;
+  else if (ctx.mode === "spark") disabled = ctx.full && !picked;
+  else if (ctx.mode === "bulk") {
+    disabled = ctx.bulkLocked && !picked &&
+      (node.type !== ctx.bulkType || (parentId ?? null) !== (ctx.bulkParent ?? null));
+  }
+
   const block = createBlock(node, {
     selectedId,
     onChange: { select: onSelect },
@@ -79,8 +94,11 @@ function renderNode(node, selectedId, ctx) {
       pick: true,
       picked,
       isTarget: node.id === ctx.target,
-      disabled: (node.id === ctx.target) || (ctx.mode === "spark" && ctx.full && !picked),
-      toggle: (id) => (ctx.mode === "spark" ? store.toggleSpark(id) : store.toggleContext(id)),
+      disabled,
+      toggle: (id) =>
+        ctx.mode === "spark" ? store.toggleSpark(id)
+        : ctx.mode === "bulk" ? store.toggleBulk(id)
+        : store.toggleContext(id),
     },
   });
 
@@ -88,7 +106,7 @@ function renderNode(node, selectedId, ctx) {
 
   if (block._childMount && !node.collapsed) {
     for (const child of node.children || []) {
-      block._childMount.append(renderNode(child, selectedId, ctx));
+      block._childMount.append(renderNode(child, selectedId, ctx, node.id));
     }
   }
   return block;

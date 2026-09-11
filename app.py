@@ -246,22 +246,45 @@ def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-def _collect_context(book: dict, ids: list, *, exclude=None) -> list[str]:
-    """Flatten the nodes the user picked as extra context, within the budget."""
-    blocks: list[str] = []
+def _collect_context(book: dict, ids: list, *, exclude_ids: set | None = None) -> list[str]:
+    """Build one context block from exactly the nodes the user ticked.
+
+    The frontend auto-ticks a parent's descendants, then lets the user untick
+    individual ones — so we include only the ticked ids (not whole subtrees),
+    emitted in document order so the excerpt reads like a slice of the outline.
+
+    ``exclude_ids`` drops the node(s) actually being generated right now, so a
+    bulk run where the user ticked the very blocks being generated as context
+    for one another never lets a block see its own (stale, about-to-be-
+    overwritten) content.
+    """
+    want = set(ids or []) - (exclude_ids or set())
+    if not want:
+        return []
+
     budget = config.CONTEXT_CHAR_BUDGET
-    for cid in (ids or [])[:40]:
-        cnode, _cp = store.find_node(book.get("nodes", []), cid)
-        if cnode is None or cnode is exclude or budget <= 0:
-            continue
-        text = store.node_as_text(cnode, limit=budget)
-        if not text:
-            continue
-        label = (cnode.get("title") or cnode.get("type") or "context").strip()
-        block = f"[{cnode.get('type', 'node')}] {label}\n\n{text}"
-        blocks.append(block)
-        budget -= len(block)
-    return blocks
+    lines: list[str] = []
+
+    def rec(nodes: list[dict], depth: int) -> None:
+        nonlocal budget
+        for n in nodes:
+            if budget > 0 and n.get("id") in want:
+                if n.get("type") == "section":
+                    body = (n.get("content") or "").strip()
+                    if body:
+                        chunk = body[:budget]
+                        lines.append(chunk)
+                        budget -= len(chunk)
+                else:
+                    title = (n.get("title") or "").strip()
+                    if title:
+                        lines.append("#" * min(depth + 1, 4) + " " + title)
+                        budget -= len(title) + 4
+            rec(n.get("children") or [], depth + 1)
+
+    rec(book.get("nodes") or [], 0)
+    text = "\n\n".join(lines).strip()
+    return [text] if text else []
 
 
 def _stream_chat_response(messages: list[dict], start_payload: dict) -> Response:
@@ -325,8 +348,18 @@ def api_generate():
         if not refine_source.strip():
             refine_source = None
 
-    # Extra context: other nodes the user picked, flattened to text.
-    context_blocks = _collect_context(book, context_ids, exclude=node)
+    # Extra context: other nodes the user picked, flattened to text. Exclude the
+    # node being generated (and, for content, its own section) even if it's
+    # among the picks — e.g. a bulk run where the ticked context is the same
+    # set of siblings being generated.
+    exclude_ids: set = set()
+    if node is not None:
+        exclude_ids.add(node.get("id"))
+        if mode == "content":
+            for child in node.get("children") or []:
+                if child.get("type") == "section":
+                    exclude_ids.add(child.get("id"))
+    context_blocks = _collect_context(book, context_ids, exclude_ids=exclude_ids)
 
     messages = prompts.build_messages(
         mode, user_prompt, tone=tone, depth=depth, refine_source=refine_source,
