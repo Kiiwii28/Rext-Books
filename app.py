@@ -475,4 +475,13 @@ def api_spark():
 if __name__ == "__main__":
     # threaded=True so the preview / asset endpoints stay responsive while an
     # SSE generation stream is in flight (and so PDF export can fetch /assets).
-    app.run(host="127.0.0.1", port=5000, debug=True, threaded=True)
+    #
+    # use_reloader=False: the debug reloader restarts itself by re-invoking
+    # sys.executable — in this venv that alternates between the venv's own
+    # python.exe and the base interpreter on each restart, cascading into a
+    # chain of several processes all fighting over the same port instead of
+    # one clean process. debug=True is kept (still get readable tracebacks
+    # in the browser on a crash); only the file-watching auto-restart is off,
+    # which isn't needed anyway when just running the app rather than
+    # actively editing its source.
+    app.run(host="127.0.0.1", port=5000, debug=True, use_reloader=False, threaded=True)

@@ -144,16 +144,31 @@ print page and you choose *Save as PDF* (enable *Background graphics*).
 `epub.py` builds the `.epub` by hand (no third-party ebook library) — same
 palette/typography as the PDF, and a proper nested navigation: both an EPUB3
 `nav.xhtml` and an EPUB2-compatible `toc.ncx`, built straight from the book's
-heading/subheading tree. It reuses the exact HTML the PDF prints from (one
-headless-Chrome pass renders every Mermaid diagram to static SVG and swaps any
-broken image for a placeholder — EPUB readers don't run JavaScript, so a live
-diagram render wouldn't work there), then re-packages that into the EPUB
-container: chapters split one-per-top-level-heading, every image (local or
-remote) downloaded and embedded as a real file since EPUB readers don't fetch
-anything over the network, and CSS that wraps long code/tables and caps image
-height so nothing overflows a reader's screen. If no headless browser is
-available, it still produces a valid (if plainer) EPUB — Mermaid blocks show
-as plain text instead of failing the export.
+heading/subheading tree. Chapters split one-per-top-level-heading, every image
+(local or remote) downloaded and embedded as a real file since EPUB readers
+don't fetch anything over the network, and CSS that wraps long code/tables and
+caps image height so nothing overflows a reader's screen.
+
+**Mermaid diagrams are rasterized to PNG, not shipped as live SVG.** One
+headless-Chrome pass (loaded from a temp *file*, not the live `/preview` URL —
+see below) renders every diagram the same way the PDF/app do, but Mermaid's
+SVG output uses `foreignObject` (HTML labels embedded in SVG) and 8-digit
+alpha-hex colours, both of which plenty of EPUB readers handle poorly (dropped
+label text, solid-black shapes are the typical failure). So instead every
+diagram gets screenshotted (at 2x for crisp high-DPI rendering) and embedded
+as a plain image — same look everywhere, at the cost of no longer being
+vector. A book can have 100+ diagrams, so they're stacked into a handful of
+tall batch screenshots and cropped apart with Pillow rather than launching a
+Chrome instance per diagram (which took minutes on a 130-diagram book; batched,
+it's under a minute). If Pillow or a headless browser isn't available, a
+diagram silently stays as live inline SVG (or, with no browser at all, plain
+text) rather than failing the export.
+
+The initial render loads a **temp file**, not the running server's own
+`/preview` URL — if it renders from `/preview`, Chrome's request lands back on
+the exact request-handler thread that's blocked waiting for Chrome, which
+stalls badly under Werkzeug's dev server (a book that exports in under 90
+seconds from a file took 4+ minutes hitting the live URL).
 
 ## Packaging a copy for someone else
 
@@ -163,6 +178,12 @@ Windows) drops a desktop shortcut with a proper icon the first time it runs —
 built from wherever the folder actually ends up, so the whole thing can be
 copied, renamed, or moved and it still works. If it's already running,
 launching it again just opens another tab instead of erroring.
+
+It runs on **port 5001**, not 5000 — deliberately different from the dev
+server's port, so a packaged copy left running in the background (it launches
+via `pythonw.exe`, with no console window and nothing in the taskbar to
+notice) can never silently squat on the dev server's port and serve stale
+content under it without anyone realizing.
 
 The actual package is a **portable folder**, not a compiled `.exe` — Windows'
 Smart App Control (on by default on most new Windows 11 installs) silently

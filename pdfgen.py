@@ -107,3 +107,40 @@ def dump_rendered_dom(url: str, *, timeout: int = 60) -> str:
             err = proc.stderr.decode("utf-8", "replace")[-500:]
             raise RuntimeError(f"Headless browser did not return any DOM. {err}")
         return text
+
+
+def screenshot_html(html: str, width: int, height: int, *, timeout: int = 30) -> bytes:
+    """Render a small standalone HTML snippet and return a PNG screenshot
+    (transparent background). Used to rasterize a single Mermaid diagram for
+    EPUB: the diagram's live SVG uses foreignObject-embedded HTML labels and
+    8-digit alpha-hex colours, both of which plenty of e-reader rendering
+    engines handle poorly or not at all (dropped labels, solid-black shapes) —
+    a plain image sidesteps that entirely, at the cost of no longer being
+    vector. Chrome renders it correctly regardless, so a screenshot always
+    matches what the PDF/app show.
+    """
+    exe = find_browser()
+    if not exe:
+        raise RuntimeError("No Chrome/Edge/Chromium found for diagram rendering.")
+    with tempfile.TemporaryDirectory(prefix="rext-shot-") as d:
+        html_path = Path(d) / "snippet.html"
+        html_path.write_text(html, encoding="utf-8")
+        out = Path(d) / "out.png"
+        cmd = [
+            exe,
+            "--headless",
+            "--disable-gpu",
+            "--no-sandbox",
+            "--no-first-run",
+            f"--user-data-dir={Path(d) / 'profile'}",
+            f"--window-size={width},{height}",
+            "--hide-scrollbars",
+            "--default-background-color=00000000",   # transparent PNG
+            f"--screenshot={out}",
+            html_path.as_uri(),
+        ]
+        proc = subprocess.run(cmd, capture_output=True, timeout=timeout)
+        if not out.exists() or out.stat().st_size == 0:
+            err = proc.stderr.decode("utf-8", "replace")[-500:]
+            raise RuntimeError(f"Headless browser did not produce a screenshot. {err}")
+        return out.read_bytes()

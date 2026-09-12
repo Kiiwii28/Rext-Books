@@ -5,6 +5,7 @@ import * as store from "./store.js";
 import { renderMarkdown, uploadImage } from "./api.js";
 import { setEditLock } from "./tree.js";
 import { renderMermaidIn } from "./mermaid-render.js";
+import { applyMarkdownAction } from "./md-toolbar.js";
 
 const TYPE_LABEL = { heading: "Heading", subheading: "Subheading", section: "Section" };
 const EDITOR_HEIGHT_KEY = "rextbooks:editorHeight";   // remembered manual editor height, in px
@@ -241,6 +242,28 @@ export function createBlock(node, { selectedId, onChange, context }) {
         <button class="btn primary sm" data-act="done">Done</button>
       </div>
       <div class="b-image-panel" hidden></div>
+      <div class="b-md-toolbar">
+        <button class="b-tool" data-md="h1" title="Heading 1">H1</button>
+        <button class="b-tool" data-md="h2" title="Heading 2">H2</button>
+        <button class="b-tool" data-md="h3" title="Heading 3">H3</button>
+        <button class="b-tool" data-md="h4" title="Heading 4">H4</button>
+        <button class="b-tool" data-md="h5" title="Heading 5">H5</button>
+        <button class="b-tool" data-md="h6" title="Heading 6">H6</button>
+        <span class="md-sep"></span>
+        <button class="b-tool md-bold" data-md="bold" title="Bold (Ctrl+B)">B</button>
+        <button class="b-tool md-italic" data-md="italic" title="Italic (Ctrl+I)">I</button>
+        <button class="b-tool md-strike" data-md="strike" title="Strikethrough">S</button>
+        <button class="b-tool md-code" data-md="code" title="Inline code">&lt;/&gt;</button>
+        <span class="md-sep"></span>
+        <button class="b-tool" data-md="ul" title="Bulleted list">•︲list</button>
+        <button class="b-tool" data-md="ol" title="Numbered list">1.list</button>
+        <button class="b-tool" data-md="quote" title="Blockquote">❝</button>
+        <span class="md-sep"></span>
+        <button class="b-tool" data-md="link" title="Link (Ctrl+K)">🔗</button>
+        <button class="b-tool" data-md="table" title="Insert table">▦&nbsp;Table</button>
+        <button class="b-tool" data-md="codeblock" title="Code block">{ }</button>
+        <button class="b-tool" data-md="hr" title="Horizontal rule">―</button>
+      </div>
       <textarea class="b-section-editor" spellcheck="true"></textarea>
       <div class="b-resize-handle" tabindex="0" role="separator" aria-orientation="horizontal"
            aria-label="Resize editor" title="Drag to resize · double-click to reset"></div>
@@ -357,6 +380,22 @@ export function createBlock(node, { selectedId, onChange, context }) {
     ta.addEventListener("keydown", (e) => {
       if (e.key === "Escape") { e.preventDefault(); fullscreen ? setFullscreen(false) : close(null); }
       if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); close(ta.value); }
+      if (e.ctrlKey || e.metaKey) {
+        const k = e.key.toLowerCase();
+        const shortcut = { b: "bold", i: "italic", k: "link" }[k];
+        if (shortcut) { e.preventDefault(); applyMarkdownAction(ta, shortcut); }
+      }
+    });
+
+    // ---- markdown formatting toolbar --------------------------------------
+    const mdToolbar = ed.querySelector(".b-md-toolbar");
+    // Buttons must not steal focus/selection from the textarea before the
+    // action runs — a mousedown on a button blurs the textarea by default.
+    mdToolbar.addEventListener("mousedown", (e) => e.preventDefault());
+    mdToolbar.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-md]");
+      if (!btn) return;
+      applyMarkdownAction(ta, btn.dataset.md);
     });
 
     function close(value) {

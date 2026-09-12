@@ -17,12 +17,13 @@ from __future__ import annotations
 import html as _html
 import mimetypes
 import re
+import tempfile
 import uuid
 import zipfile
 from datetime import date, datetime
 from io import BytesIO
-from pathlib import PurePosixPath
-from urllib.parse import quote, urljoin
+from pathlib import Path, PurePosixPath
+from urllib.parse import urljoin
 
 import requests
 from werkzeug.utils import secure_filename
@@ -33,11 +34,23 @@ import palettes
 import pdfgen
 import store
 
+try:
+    from PIL import Image   # optional: only needed to rasterize Mermaid diagrams
+except ImportError:         # pragma: no cover - degrades to inline SVG
+    Image = None
+
 _AMP = re.compile(r"&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)")
 _VOID = re.compile(r"<(br|hr|img|input|meta|link|col|source)\b([^>]*?)\s*/?>", re.IGNORECASE)
 _CHAPTER = re.compile(r'<section class="chapter">(.*?)</section>', re.DOTALL)
 _IMG_TAG = re.compile(r"<img\b([^>]*)/?>", re.IGNORECASE)
 _ATTR = re.compile(r'([\w:-]+)\s*=\s*"([^"]*)"')
+_LOCAL_IMG_HTML = re.compile(r'(<img\b[^>]*\bsrc=")(/assets/[^"]+)(")')
+_MERMAID_FIGURE = re.compile(
+    r'<figure class="mermaid-figure"><pre class="mermaid rendered"[^>]*>(.*?)</pre></figure>',
+    re.DOTALL,
+)
+_VIEWBOX = re.compile(r'viewBox="[-\d.]+\s+[-\d.]+\s+([\d.]+)\s+([\d.]+)"')
+_MERMAID_SHOT_SCALE = 2   # render at 2x so it stays crisp on high-DPI readers
 
 _CONTAINER_XML = """<?xml version="1.0" encoding="UTF-8"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
@@ -45,6 +58,14 @@ _CONTAINER_XML = """<?xml version="1.0" encoding="UTF-8"?>
     <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
   </rootfiles>
 </container>"""
+
+
+def _absolutise_html(html: str, base_url: str) -> str:
+    """Rewrite <img src="/assets/..."> to a full URL. Needed once the render
+    pass loads from a local file instead of the live server (see
+    book_to_epub) — a root-relative path can't resolve against file://."""
+    base = (base_url or "").rstrip("/")
+    return _LOCAL_IMG_HTML.sub(lambda m: f"{m.group(1)}{base}{m.group(2)}{m.group(3)}", html)
 
 
 def _xmlify(fragment: str) -> str:
@@ -78,10 +99,16 @@ class _AssetBag:
             self.by_src[src] = None
             return None
         body, ext = got
+        name = self.add_bytes(body, ext)
+        self.by_src[src] = name
+        return name
+
+    def add_bytes(self, data: bytes, ext: str) -> str:
+        """Add an already-in-hand file (e.g. a rasterized diagram) with no
+        source URL to de-duplicate against — always a fresh asset."""
         self._n += 1
         name = f"images/img{self._n}.{ext}"
-        self.by_src[src] = name
-        self.files[name] = body
+        self.files[name] = data
         self.media_types[name] = (
             "image/svg+xml" if ext == "svg" else (mimetypes.types_map.get(f".{ext}") or "image/png")
         )
@@ -108,6 +135,122 @@ class _AssetBag:
             return r.content, (ext if ext in self._EXTS else "png")
         except requests.RequestException:
             return None
+
+
+def _force_svg_size(svg: str, w: float, h: float) -> str:
+    """Strip any existing width/height/style on the root <svg> and pin it to
+    an exact pixel size (viewBox already defines the internal coordinate
+    system, so this just scales the rendered output cleanly)."""
+    svg = re.sub(r'\swidth="[^"]*"', "", svg, count=1)
+    svg = re.sub(r'\sheight="[^"]*"', "", svg, count=1)
+    svg = re.sub(r'\sstyle="[^"]*"', "", svg, count=1)
+    return re.sub(r"^<svg\b", f'<svg width="{w:.2f}" height="{h:.2f}"', svg, count=1)
+
+
+_GAP = 12            # px between stacked diagrams in one batch screenshot
+_MAX_BATCH_HEIGHT = 6000   # keeps each individual headless-Chrome screenshot modest
+
+
+def _rasterize_all_mermaid(chapter_html: list[str], bag: "_AssetBag") -> list[str]:
+    """Replace every pre-rendered (but still live-SVG) Mermaid figure across
+    every chapter with a rasterized PNG.
+
+    Mermaid's SVG uses foreignObject for labels and 8-digit alpha-hex fills —
+    both are inconsistently supported across e-reader rendering engines
+    (dropped label text, solid-black shapes are the typical failure). A
+    screenshot, taken with the same Chrome that already renders it correctly
+    for the app/PDF, sidesteps that completely.
+
+    A textbook can easily have 100+ diagrams — one headless-Chrome launch per
+    diagram would take minutes, so instead every diagram this finds gets
+    stacked into a handful of tall pages (capped in height so each screenshot
+    stays quick), each page screenshotted once and cropped apart with Pillow.
+    """
+    entries: list[dict] = []
+    for ci, html in enumerate(chapter_html):
+        for m in _MERMAID_FIGURE.finditer(html):
+            svg = m.group(1)
+            vb = _VIEWBOX.search(svg)
+            w = float(vb.group(1)) if vb else 600.0
+            h = float(vb.group(2)) if vb else 300.0
+            entries.append({
+                "ci": ci, "svg": svg,
+                "w": max(60.0, min(w, 1600.0)),
+                "h": max(40.0, min(h, 1600.0)),
+            })
+
+    if not entries or Image is None or not pdfgen.available():
+        return chapter_html   # leave as live inline SVG — still valid, just less compatible
+
+    batch: list[dict] = []
+    batch_h = 0.0
+    for e in entries:
+        eh = e["h"] * _MERMAID_SHOT_SCALE + _GAP
+        if batch and batch_h + eh > _MAX_BATCH_HEIGHT:
+            _rasterize_batch(batch, bag)
+            batch, batch_h = [], 0.0
+        batch.append(e)
+        batch_h += eh
+    if batch:
+        _rasterize_batch(batch, bag)
+
+    by_chapter: dict[int, list[dict]] = {}
+    for e in entries:
+        by_chapter.setdefault(e["ci"], []).append(e)
+
+    out = list(chapter_html)
+    for ci, group in by_chapter.items():
+        it = iter(group)
+
+        def repl(m: re.Match, _it=it) -> str:
+            e = next(_it)
+            if "asset" not in e:
+                return m.group(0)
+            return (
+                '<figure class="mermaid-figure">'
+                f'<img src="{e["asset"]}" alt="Diagram" width="{int(e["w"])}" height="{int(e["h"])}"/>'
+                "</figure>"
+            )
+
+        out[ci] = _MERMAID_FIGURE.sub(repl, out[ci])
+    return out
+
+
+def _rasterize_batch(group: list[dict], bag: "_AssetBag") -> None:
+    """Stack every diagram in `group` into one tall page, screenshot it once,
+    and crop each diagram back out with Pillow — sets `e["asset"]` in place."""
+    y = 0.0
+    max_w = 0.0
+    divs = []
+    positions = []
+    for e in group:
+        sw, sh = e["w"] * _MERMAID_SHOT_SCALE, e["h"] * _MERMAID_SHOT_SCALE
+        sized_svg = _force_svg_size(e["svg"], sw, sh)
+        divs.append(
+            f'<div style="position:absolute;left:0;top:{y:.1f}px;'
+            f'width:{sw:.1f}px;height:{sh:.1f}px;overflow:hidden;">{sized_svg}</div>'
+        )
+        positions.append((y, sw, sh))
+        max_w = max(max_w, sw)
+        y += sh + _GAP
+    total_h = y
+
+    html = (
+        '<!DOCTYPE html><html><head><meta charset="utf-8">'
+        "<style>html,body{margin:0;padding:0;background:transparent;}"
+        "svg{display:block;}</style></head><body>" + "".join(divs) + "</body></html>"
+    )
+    try:
+        png_bytes = pdfgen.screenshot_html(html, int(max_w) + 8, int(total_h) + 8)
+        sheet = Image.open(BytesIO(png_bytes)).convert("RGBA")
+    except Exception:
+        return   # every entry in this batch simply stays as inline SVG
+
+    for e, (y0, sw, sh) in zip(group, positions):
+        crop = sheet.crop((0, int(y0), int(sw), int(y0 + sh)))
+        buf = BytesIO()
+        crop.save(buf, format="PNG")
+        e["asset"] = bag.add_bytes(buf.getvalue(), "png")
 
 
 def _rewrite_images(fragment: str, bag: "_AssetBag") -> str:
@@ -324,20 +467,27 @@ def book_to_epub(book: dict, palette_name: str | None, base_url: str, exclude_id
     chapters, nav_ol, ncx_points = _build_nav(nodes)
 
     # One headless-Chrome pass renders Mermaid diagrams to static SVG and
-    # swaps out any broken image — exactly what the PDF export gets.
-    preview_url = f"{base_url.rstrip('/')}/api/books/{book['id']}/preview?palette={quote(palette_name or '')}"
-    if exclude_ids:
-        preview_url += f"&exclude={quote(','.join(exclude_ids))}"
+    # swaps out any broken image — exactly what the PDF export gets. Rendered
+    # from a *local file*, not the live /preview URL: this call runs inside
+    # the very request handler thread that's serving this export, and Chrome
+    # making an HTTP request back to that same (single-process) dev server
+    # while its handler thread sits blocked on this subprocess call stalls
+    # badly — a four-minute export dropped to under ninety seconds by
+    # rendering a local file instead of asking the server to render itself.
+    html_doc = _absolutise_html(_export.book_to_html(book, palette_name, exclude_ids), base_url)
     dumped = None
     if pdfgen.available():
         try:
-            dumped = pdfgen.dump_rendered_dom(preview_url)
+            with tempfile.TemporaryDirectory(prefix="rext-epub-render-") as d:
+                html_path = Path(d) / "preview.html"
+                html_path.write_text(html_doc, encoding="utf-8")
+                dumped = pdfgen.dump_rendered_dom(html_path.as_uri())
         except Exception:
             dumped = None
     if dumped is None:
         # No headless browser at all — still produce a valid (if plainer)
         # epub rather than failing outright; Mermaid blocks stay as text.
-        dumped = _export.book_to_html(book, palette_name, exclude_ids)
+        dumped = html_doc
 
     chapter_html = _CHAPTER.findall(dumped)
 
@@ -349,6 +499,15 @@ def book_to_epub(book: dict, palette_name: str | None, base_url: str, exclude_id
     bag = _AssetBag(base_url)
     manifest_items: list[tuple[str, str, str]] = []
     spine_ids: list[str] = []
+
+    # Content <img> tags first (real URLs to fetch/embed) for every chapter,
+    # *then* Mermaid rasterization once across all of them — reversed, the
+    # image rewrite would try to re-fetch a freshly-inserted epub-internal
+    # image path as if it were a content URL, fail, and stomp it with a
+    # placeholder. Mermaid runs last, batched, since a book can easily have
+    # 100+ diagrams and a Chrome launch per diagram would take minutes.
+    chapter_html = [_rewrite_images(h, bag) for h in chapter_html]
+    chapter_html = _rasterize_all_mermaid(chapter_html, bag)
 
     zbuf = BytesIO()
     with zipfile.ZipFile(zbuf, "w", zipfile.ZIP_DEFLATED) as z:
@@ -362,7 +521,6 @@ def book_to_epub(book: dict, palette_name: str | None, base_url: str, exclude_id
 
         for i, (node, fname) in enumerate(chapters, start=1):
             inner = chapter_html[i - 1] if i - 1 < len(chapter_html) else ""
-            inner = _rewrite_images(inner, bag)
             inner = _xmlify(inner)
             chap_title = _html.escape(node.get("title") or "Untitled")
             z.writestr(f"OEBPS/{fname}", _chapter_xhtml(chap_title, inner))

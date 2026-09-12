@@ -27,7 +27,12 @@ import app as appmod
 import config
 
 HOST = "127.0.0.1"
-PORT = 5000
+# Deliberately NOT 5000 — that's the dev server's port (python app.py). Using
+# a different one means a packaged copy left running in the background (this
+# launches with no console window, so there's nothing to notice) can never
+# silently squat on the same port as the dev server and serve stale content
+# under it without anyone realizing.
+PORT = 5001
 URL = f"http://{HOST}:{PORT}"
 
 
