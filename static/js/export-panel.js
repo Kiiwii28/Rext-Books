@@ -11,6 +11,8 @@ let palettes = {};
 let fmt = "pdf";
 let pdfNative = true;
 let included = new Set();   // node ids currently included in the export
+let collapsed = new Set();  // node ids whose children are currently hidden in the tree
+let contentOpen = false;    // whether the "Content to include" section itself is expanded
 
 export async function mountExport(refs) {
   els = refs;
@@ -41,6 +43,8 @@ export async function mountExport(refs) {
     included = new Set();
     renderContentTree();
   });
+
+  els.contentToggle.addEventListener("click", () => setContentOpen(!contentOpen));
 
   els.goBtn.addEventListener("click", go);
 }
@@ -81,11 +85,28 @@ function renderContentTree() {
   const all = book ? allIds(book.nodes || []) : [];
   const total = all.length;
   const n = all.filter((id) => included.has(id)).length;
-  els.contentHint.textContent = total === 0 ? ""
+  const summary = total === 0 ? ""
     : n === total ? `All ${total} blocks included.`
     : n === 0 ? "Nothing selected — pick at least one block to export."
     : `${n} of ${total} blocks included.`;
+  els.contentHint.textContent = summary;
+  els.contentSummary.textContent = total === 0 ? "" : n === total ? `${total}/${total}` : `${n}/${total}`;
   els.goBtn.disabled = total > 0 && n === 0;
+}
+
+/** Collapse every node that has children — shown by default so the tree opens
+ *  tidy (just top-level headings) and the user drills down as they like. */
+function collapseAll(nodes) {
+  for (const n of nodes) {
+    if ((n.children || []).length) { collapsed.add(n.id); collapseAll(n.children); }
+  }
+}
+
+function setContentOpen(open) {
+  contentOpen = open;
+  els.contentBody.hidden = !open;
+  els.contentToggle.setAttribute("aria-expanded", String(open));
+  els.contentToggle.classList.toggle("is-open", open);
 }
 
 function buildList(nodes) {
@@ -93,7 +114,9 @@ function buildList(nodes) {
   ul.className = "ect-list";
   for (const n of nodes) {
     const { total, inc } = subtreeCounts(n);
+    const hasChildren = (n.children || []).length > 0;
     const li = document.createElement("li");
+    li.className = "ect-item" + (hasChildren && collapsed.has(n.id) ? " ect-collapsed" : "");
     const row = document.createElement("label");
     row.className = "ect-row" + (inc === total ? " ect-checked" : "");
     const cb = document.createElement("input");
@@ -101,15 +124,30 @@ function buildList(nodes) {
     cb.checked = inc === total;
     cb.indeterminate = inc > 0 && inc < total;
     cb.addEventListener("change", () => toggleInclude(n));
+    const chevron = document.createElement("button");
+    chevron.type = "button";
+    chevron.className = "ect-chevron" + (hasChildren ? "" : " is-hidden");
+    chevron.textContent = "▸";
+    chevron.title = collapsed.has(n.id) ? "Expand" : "Collapse";
+    chevron.tabIndex = hasChildren ? 0 : -1;
+    chevron.addEventListener("click", (e) => {
+      // Stop the click reaching the <label> row, which would otherwise also
+      // toggle the checkbox (the label's default action for any inner click).
+      e.preventDefault();
+      e.stopPropagation();
+      if (!hasChildren) return;
+      collapsed.has(n.id) ? collapsed.delete(n.id) : collapsed.add(n.id);
+      renderContentTree();
+    });
     const kind = document.createElement("span");
     kind.className = "ect-kind";
     kind.textContent = TYPE_ICON[n.type] || "·";
     const title = document.createElement("span");
     title.className = "ect-title";
     title.textContent = n.type === "section" ? "Content" : (n.title || "(untitled)");
-    row.append(cb, kind, title);
+    row.append(cb, chevron, kind, title);
     li.append(row);
-    if ((n.children || []).length) li.append(buildList(n.children));
+    if (hasChildren) li.append(buildList(n.children));
     ul.append(li);
   }
   return ul;
@@ -169,6 +207,9 @@ function open() {
   const book = store.getBook();
   if (!book) return;
   included = new Set(allIds(book.nodes || []));
+  collapsed = new Set();
+  collapseAll(book.nodes || []);
+  setContentOpen(false);
   renderContentTree();
   markSelected();
   syncFormat();

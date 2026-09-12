@@ -616,6 +616,25 @@ body.is-resizing-y, body.is-resizing-y * { cursor: ns-resize !important; user-se
 }
 .ai-target-path { font-size: 12.5px; font-weight: 600; line-height: 1.45; overflow-wrap: anywhere; }
 
+.ai-overarching { border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--glass-hi); }
+.ai-overarching-toggle {
+  display: flex; align-items: center; gap: 7px; width: 100%;
+  border: 0; background: transparent; cursor: pointer;
+  padding: 8px 10px; border-radius: var(--radius-sm); text-align: left;
+}
+.ai-overarching-toggle:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.ai-oa-chevron { font-size: 10px; color: var(--ink-soft); flex: none; transition: transform .15s ease; }
+.ai-overarching-toggle.is-open .ai-oa-chevron { transform: rotate(90deg); }
+.ai-oa-badge {
+  margin-left: auto; font-size: 10px; font-weight: 700; letter-spacing: .04em;
+  color: var(--accent-ink); background: linear-gradient(180deg, var(--accent-2), var(--accent));
+  padding: 2px 7px; border-radius: 999px;
+}
+.ai-overarching-body { padding: 0 10px 10px; display: flex; flex-direction: column; gap: 6px; }
+.ai-oa-hint { margin: 0; font-size: 11.5px; color: var(--ink-faint); line-height: 1.4; }
+.ai-overarching-input { min-height: 64px; }
+.ai-overarching-foot { display: flex; justify-content: flex-end; }
+
 .ai-count-row {
   display: flex;
   align-items: center;
@@ -1107,6 +1126,19 @@ body.is-resizing-y, body.is-resizing-y * { cursor: ns-resize !important; user-se
   outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 1px;
 }
 
+.export-content-toggle {
+  display: flex; align-items: center; gap: 7px; width: 100%;
+  border: 0; background: transparent; cursor: pointer;
+  padding: 4px 2px; border-radius: 6px; text-align: left;
+}
+.export-content-toggle:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.ect-toggle-chevron {
+  font-size: 10px; color: var(--ink-soft); flex: none;
+  transition: transform .15s ease;
+}
+.export-content-toggle.is-open .ect-toggle-chevron { transform: rotate(90deg); }
+.export-content-summary { margin-left: auto; font-size: 11.5px; color: var(--ink-faint); font-weight: 600; }
+.export-content-body { margin-top: 8px; }
 .export-content-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .export-content-actions { display: flex; gap: 10px; }
 .mini-link {
@@ -1135,6 +1167,17 @@ body.is-resizing-y, body.is-resizing-y * { cursor: ns-resize !important; user-se
 .ect-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-soft); }
 .ect-row.ect-checked .ect-title { color: var(--ink); }
 
+.ect-chevron {
+  appearance: none; border: 0; background: transparent; color: var(--ink-soft);
+  cursor: pointer; width: 15px; height: 15px; flex: none;
+  border-radius: 4px; font-size: 9px; line-height: 1;
+  transition: transform .15s ease, background .12s ease;
+}
+.ect-chevron:hover { background: var(--line); }
+.ect-chevron.is-hidden { visibility: hidden; }
+.ect-item:not(.ect-collapsed) > .ect-row > .ect-chevron { transform: rotate(90deg); }
+.ect-item.ect-collapsed > .ect-list { display: none; }
+
 .palette-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px;
 }
@@ -1151,17 +1194,26 @@ body.is-resizing-y, body.is-resizing-y * { cursor: ns-resize !important; user-se
 .sw-name { font-size: 11.5px; font-weight: 600; color: var(--ink-soft); text-align: left; }
 
 /* ---------- tutorial tour ---------- */
-.tour-mask-strip {
+/* Full-viewport click-swallower — invisible, always covers the whole
+   screen. The actual spotlighted element sits above it (z-index 9999) so
+   clicks still land on it normally; everywhere else is blocked. */
+.tour-blocker {
   position: fixed;
-  background: color-mix(in srgb, var(--ink) 58%, transparent);
+  inset: 0;
   z-index: 9998;
   pointer-events: auto;
 }
-.tour-shield {
+/* The dim + cutout, purely visual (pointer-events: none — .tour-blocker
+   underneath handles all click-blocking). A single box-shadow spread wide
+   enough to blanket the viewport paints everything outside this box dark,
+   naturally clipped to the box's own border-radius — a real rounded
+   cutout, unlike four straight-edged mask strips meeting in a square notch. */
+.tour-hole {
   position: fixed;
   z-index: 9998;
-  pointer-events: auto;
-  border-radius: 8px;
+  pointer-events: none;
+  border-radius: 10px;
+  box-shadow: 0 0 0 9999px color-mix(in srgb, var(--ink) 58%, transparent);
 }
 .tour-spotlight {
   position: relative;

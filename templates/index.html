@@ -86,6 +86,22 @@
           <span id="ai-target-path" class="ai-target-path">Whole textbook</span>
         </div>
 
+        <div class="ai-overarching">
+          <button type="button" id="ai-overarching-toggle" class="ai-overarching-toggle" aria-expanded="false">
+            <span class="ai-oa-chevron">▸</span>
+            <span class="ai-tag-label">Overarching prompt</span>
+            <span id="ai-overarching-badge" class="ai-oa-badge" hidden>Set</span>
+          </button>
+          <div id="ai-overarching-body" class="ai-overarching-body" hidden>
+            <p class="ai-oa-hint">Applied to every generation for this book, so you don't have to retype it — e.g. “Please consider a historical perspective” or “Don't use em-dashes.”</p>
+            <textarea id="ai-overarching" class="ai-prompt ai-overarching-input" rows="3"
+              placeholder="A standing instruction for this book…"></textarea>
+            <div class="ai-overarching-foot">
+              <button type="button" id="ai-overarching-clear" class="mini-link">Clear</button>
+            </div>
+          </div>
+        </div>
+
         <label class="ai-count-row" id="ai-count-row">
           <span>Number of headings</span>
           <input id="ai-count" type="number" min="1" max="20" value="3" />
@@ -174,15 +190,21 @@
         </div>
 
         <div class="field">
-          <div class="export-content-head">
+          <button type="button" id="export-content-toggle" class="export-content-toggle" aria-expanded="false">
+            <span class="ect-toggle-chevron">▸</span>
             <span class="field-label">Content to include</span>
-            <div class="export-content-actions">
-              <button type="button" id="export-select-all" class="mini-link">Select all</button>
-              <button type="button" id="export-select-none" class="mini-link">Select none</button>
+            <span id="export-content-summary" class="export-content-summary"></span>
+          </button>
+          <div id="export-content-body" class="export-content-body" hidden>
+            <div class="export-content-head">
+              <div class="export-content-actions">
+                <button type="button" id="export-select-all" class="mini-link">Select all</button>
+                <button type="button" id="export-select-none" class="mini-link">Select none</button>
+              </div>
             </div>
+            <div id="export-content-tree" class="export-content-tree"></div>
+            <p id="export-content-hint" class="export-note"></p>
           </div>
-          <div id="export-content-tree" class="export-content-tree"></div>
-          <p id="export-content-hint" class="export-note"></p>
         </div>
 
         <p id="export-note" class="export-note"></p>

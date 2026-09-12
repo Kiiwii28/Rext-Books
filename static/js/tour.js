@@ -112,6 +112,15 @@ const STEPS = [
     target: "#ai-mode-chip",
   },
   {
+    title: "Overarching prompt",
+    body: "A standing instruction applied to <b>every</b> generation for this " +
+      "book, so you don't have to keep retyping it — things like “consider a " +
+      "historical perspective” or “don't use em-dashes.” Click to open it; " +
+      "it stays put no matter what you click on next, and travels with the " +
+      "book. <b>Clear</b> wipes it.",
+    target: "#ai-overarching-toggle",
+  },
+  {
     title: "Tone & depth",
     body: "Pick a writing tone and a difficulty level. Every generation " +
       "uses these, and they're remembered per book.",
@@ -231,12 +240,15 @@ function buildOverlay() {
   const root = document.createElement("div");
   root.className = "tour-root";
   const strip = (cls) => { const d = document.createElement("div"); d.className = cls; return d; };
-  const top = strip("tour-mask-strip");
-  const bottom = strip("tour-mask-strip");
-  const left = strip("tour-mask-strip");
-  const right = strip("tour-mask-strip");
-  const shield = strip("tour-shield");
-  shield.hidden = true;
+  // `blocker` swallows clicks everywhere (full viewport, invisible); `hole`
+  // is the purely-visual dark surround with an actual rounded-rect cutout —
+  // a single box-shadow spread big enough to blanket the viewport, clipped
+  // to the box's own border-radius, so the cutout's corners are properly
+  // rounded (four separate rectangular mask strips can't do that: their
+  // straight edges always meet in a square notch, no matter the target's
+  // own rounding).
+  const blocker = strip("tour-blocker");
+  const hole = strip("tour-hole");
 
   const card = document.createElement("div");
   card.className = "tour-card";
@@ -259,9 +271,9 @@ function buildOverlay() {
   card.querySelector(".tour-back").addEventListener("click", goBack);
   card.querySelector(".tour-next").addEventListener("click", goNext);
 
-  root.append(top, bottom, left, right, shield, card);
+  root.append(blocker, hole, card);
   document.body.append(root);
-  els = { root, top, bottom, left, right, shield, card };
+  els = { root, blocker, hole, card };
 }
 
 async function render() {
@@ -301,24 +313,17 @@ function layout(target, step) {
   const vw = window.innerWidth, vh = window.innerHeight;
 
   if (!target) {
-    setRect(els.top, 0, 0, vw, vh);
-    setRect(els.bottom, 0, vh, vw, 0);
-    setRect(els.left, 0, 0, 0, vh);
-    setRect(els.right, vw, 0, 0, vh);
-    els.shield.hidden = true;
+    // Zero-size hole, centered — the box-shadow spread still blankets the
+    // whole viewport uniformly (no rounding artifacts on a zero-size box),
+    // giving the same full-screen dim as before for informational steps.
+    setRect(els.hole, vw / 2, vh / 2, 0, 0);
   } else {
     const r = target.getBoundingClientRect();
     const top = Math.max(r.top - PAD, 0);
     const bottom = Math.min(r.bottom + PAD, vh);
     const left = Math.max(r.left - PAD, 0);
     const right = Math.min(r.right + PAD, vw);
-
-    setRect(els.top, 0, 0, vw, top);
-    setRect(els.bottom, 0, bottom, vw, vh - bottom);
-    setRect(els.left, 0, top, left, bottom - top);
-    setRect(els.right, right, top, vw - right, bottom - top);
-    els.shield.hidden = false;
-    setRect(els.shield, left, top, right - left, bottom - top);
+    setRect(els.hole, left, top, right - left, bottom - top);
   }
 
   positionCard(target);

@@ -17,6 +17,9 @@ let ctrl = null;
 let renderThrottle = 0;
 let wasBulk = false;
 let bulkRunning = false;
+let oaOpen = false;         // "Overarching prompt" disclosure — collapsed by default
+let oaLastBookId = undefined;   // re-seed the textarea only when the book actually changes
+let oaSaveTimer = null;
 
 // A bulk queue is "in view" (prompt box = shared instruction, dock shows the
 // N-block summary) whenever the picker is open OR there's a queued selection
@@ -71,6 +74,39 @@ export function mountDock(refs) {
     if (!store.getBook()) return;
     store.startBulkPick();
   });
+
+  els.oaToggle.addEventListener("click", () => setOaOpen(!oaOpen));
+  els.oaInput.addEventListener("input", () => {
+    updateOaBadge();
+    clearTimeout(oaSaveTimer);
+    oaSaveTimer = setTimeout(commitOa, 600);   // debounced — typing shouldn't re-render the tree on every keystroke
+  });
+  els.oaInput.addEventListener("blur", commitOa);
+  els.oaClear.addEventListener("click", () => {
+    els.oaInput.value = "";
+    updateOaBadge();
+    commitOa();
+  });
+}
+
+/** Persist the textarea's current value to the book's settings (debounced
+ *  while typing, flushed immediately on blur/Clear). A no-op if nothing
+ *  actually changed, so it doesn't mark the book dirty for free. */
+function commitOa() {
+  clearTimeout(oaSaveTimer);
+  const v = els.oaInput.value;
+  if (v !== store.getSetting("overarchingPrompt")) store.setSetting("overarchingPrompt", v);
+}
+
+function updateOaBadge() {
+  els.oaBadge.hidden = !(els.oaInput.value || "").trim();
+}
+
+function setOaOpen(open) {
+  oaOpen = open;
+  els.oaBody.hidden = !open;
+  els.oaToggle.setAttribute("aria-expanded", String(open));
+  els.oaToggle.classList.toggle("is-open", open);
 }
 
 function buildChips(container, values, settingKey) {
@@ -101,6 +137,16 @@ function syncChips(container, value) {
 export function updateDock(state) {
   const bookId = state.book?.id || "";
   if (lastSig !== null && !lastSig.startsWith(bookId + "|")) promptDirty = false;
+
+  // Re-seed the overarching-prompt textarea only when the book itself changes
+  // (never on every re-render — that would stomp on what the user is typing).
+  if (bookId !== oaLastBookId) {
+    oaLastBookId = bookId;
+    clearTimeout(oaSaveTimer);
+    els.oaInput.value = state.book ? (store.getSetting("overarchingPrompt") || "") : "";
+    updateOaBadge();
+    setOaOpen(false);
+  }
 
   const sig = `${bookId}|${state.book?.topic || ""}|${state.selectedId || ""}`;
   const changed = sig !== lastSig;

@@ -18,7 +18,22 @@ Each system prompt is split into two parts:
 
 from __future__ import annotations
 
+import re
+
 MODES = ("outline", "subheadings", "content")
+
+# Best-effort detectors for a handful of common, concrete asks that would
+# otherwise directly contradict one of the fixed DEFAULTS below (e.g. our own
+# "include about one Mermaid diagram" default vs. a user who explicitly wants
+# none). Matched against the user's standing preference + their per-request
+# prompt combined. Deliberately narrow/loose regexes, not a general intent
+# parser — false negatives just fall back to normal (weaker) prompt-based
+# compliance; false positives are unlikely given how specific the phrasing is.
+_NO_DIAGRAMS_RE = re.compile(
+    r"\b(?:no|don'?t|never|avoid|without|skip)\b[^.\n]{0,20}\bdiagrams?\b", re.I)
+_NO_IMAGES_RE = re.compile(
+    r"\b(?:no|don'?t|never|avoid|without|skip)\b[^.\n]{0,20}\bimages?\b", re.I)
+_EM_DASH_RE = re.compile(r"em[\s-]?dash", re.I)
 
 TONES = ("Technical", "Academic", "Blog", "Conversational", "Informative", "Casual")
 DEPTHS = ("Beginner", "Intermediate", "Advanced")
@@ -88,41 +103,71 @@ SYSTEM_PROMPTS = {
             "Keep each title concise.",
         ],
     ),
-    "content": _frame(
-        "You are an expert textbook author writing the body text for ONE subsection.",
-        rules=[
-            "Cover only the subsection named in the request — do not write sibling "
-            "subsections or re-teach the parent chapter.",
-            "Output Markdown only: no preamble, no meta-commentary, and do not wrap the "
-            "whole answer in a code fence.",
-            'Do not use a top-level "# " heading — the subsection heading is supplied by '
-            'the app. Use "##" and deeper for internal structure.',
-            "Every diagram must be a valid Mermaid fenced code block (info string "
-            "'mermaid') with plain-text labels.",
-            "Only use a Markdown image link for an image you can point to a real, stable "
-            "URL for (e.g. a specific Wikimedia Commons file). NEVER use a placeholder-"
-            "image service (placehold.co, dummyimage.com, via.placeholder.com, "
-            "picsum.photos and the like) and never invent or guess an image URL. If you "
-            "want to convey a figure you have no real URL for, draw it as a Mermaid "
-            "diagram or describe it in a sentence instead — do not emit an image tag.",
-        ],
-        defaults=[
-            'Open with a short orienting paragraph and close with a brief "Summary".',
-            "Use worked examples where they aid understanding.",
-            "Include about one Mermaid diagram where a process, hierarchy, flow, sequence "
-            "or timeline genuinely clarifies things. If the user asks for more diagrams, "
-            "comply — up to about six.",
+}
+
+
+def _content_system_prompt(*, no_diagrams: bool = False, no_images: bool = False) -> str:
+    """Built per-request (not baked into SYSTEM_PROMPTS) so that an explicit "no
+    diagrams" / "no images" ask can drop the matching RULE+DEFAULT pair entirely,
+    instead of leaving a DEFAULT that plainly tells the model to add one right
+    next to a user instruction telling it not to — a direct contradiction inside
+    the same system prompt that a "the user's instructions win" precedence note
+    alone doesn't reliably resolve."""
+    rules = [
+        "Cover only the subsection named in the request — do not write sibling "
+        "subsections or re-teach the parent chapter.",
+        "Output Markdown only: no preamble, no meta-commentary, and do not wrap the "
+        "whole answer in a code fence.",
+        'Do not use a top-level "# " heading — the subsection heading is supplied by '
+        'the app. Use "##" and deeper for internal structure.',
+    ]
+    rules.append(
+        "The user does not want any diagrams in this response — do not emit a "
+        "Mermaid code block or any other diagram, full stop."
+        if no_diagrams else
+        "Every diagram must be a valid Mermaid fenced code block (info string "
+        "'mermaid') with plain-text labels."
+    )
+    rules.append(
+        "The user does not want any images in this response — do not emit a "
+        "Markdown image link, full stop."
+        if no_images else
+        "Only use a Markdown image link for an image you can point to a real, stable "
+        "URL for (e.g. a specific Wikimedia Commons file). NEVER use a placeholder-"
+        "image service (placehold.co, dummyimage.com, via.placeholder.com, "
+        "picsum.photos and the like) and never invent or guess an image URL. If you "
+        "want to convey a figure you have no real URL for, draw it as a Mermaid "
+        "diagram or describe it in a sentence instead — do not emit an image tag."
+    )
+
+    defaults = [
+        'Open with a short orienting paragraph and close with a brief "Summary".',
+        "Use worked examples where they aid understanding.",
+    ]
+    if not no_diagrams:
+        defaults.append(
+            "Include about one Mermaid diagram where a process, hierarchy, flow, "
+            "sequence or timeline genuinely clarifies things. If the user asks for "
+            "more diagrams, comply — up to about six."
+        )
+        defaults.append(
             "Keep each Mermaid diagram compact enough to fit on one page: at most ~10 "
             "nodes, short labels, and for a long chain or sequence use a left-to-right "
             "flow ('flowchart LR' / 'graph LR') rather than top-down so it stays wide, "
             "not tall. Split a big process into two smaller diagrams instead of one huge "
-            "one.",
-            "Use images sparingly — about one where it truly adds value. If the user asks "
-            "for more images, comply — up to about eight.",
-            "Keep it a focused subsection, not an exhaustive treatise.",
-        ],
-    ),
-}
+            "one."
+        )
+    if not no_images:
+        defaults.append(
+            "Use images sparingly — about one where it truly adds value. If the user "
+            "asks for more images, comply — up to about eight."
+        )
+    defaults.append("Keep it a focused subsection, not an exhaustive treatise.")
+
+    return _frame(
+        "You are an expert textbook author writing the body text for ONE subsection.",
+        rules=rules, defaults=defaults,
+    )
 
 DEFAULT_TEMPLATES = {
     "outline": (
@@ -161,15 +206,47 @@ _CONTEXT_PREAMBLE = (
 
 def build_messages(mode: str, user_prompt: str, *, tone: str | None = None,
                    depth: str | None = None, refine_source: str | None = None,
-                   context_blocks: list[str] | None = None) -> list[dict]:
-    if mode not in SYSTEM_PROMPTS:
+                   context_blocks: list[str] | None = None,
+                   overarching: str | None = None) -> list[dict]:
+    if mode not in MODES:
         raise ValueError(f"unknown mode: {mode!r}")
 
-    parts = [SYSTEM_PROMPTS[mode]]
+    overarching = (overarching or "").strip()
+    combined_hint = f"{overarching}\n{user_prompt or ''}"
+
+    if mode == "content":
+        system_prompt = _content_system_prompt(
+            no_diagrams=bool(_NO_DIAGRAMS_RE.search(combined_hint)),
+            no_images=bool(_NO_IMAGES_RE.search(combined_hint)),
+        )
+    else:
+        system_prompt = SYSTEM_PROMPTS[mode]
+    parts = [system_prompt]
 
     style = [h for h in (_TONE_HINT.get(tone or ""), _DEPTH_HINT.get(depth or "")) if h]
     if style:
         parts.append("STYLE (a DEFAULT — the user may override): " + " ".join(style))
+    if overarching:
+        # A standing preference the user set once for this book (e.g. "don't use
+        # em-dashes") so they don't have to repeat it in every prompt. Same
+        # precedence as STYLE: a DEFAULT, not a RULE — but phrased as a direct
+        # instruction to follow even where it means skipping something a
+        # DEFAULT above suggested, since a quiet "the user's instructions win"
+        # precedence note elsewhere in the prompt is easy for the model to
+        # under-weight against a concrete, specific DEFAULT bullet.
+        parts.append(
+            "USER'S STANDING PREFERENCE for this book — apply it throughout this "
+            "response, even where it means skipping something a DEFAULT above "
+            "suggested (RULES still win if there's a genuine conflict): "
+            + overarching
+        )
+    if _EM_DASH_RE.search(combined_hint):
+        parts.append(
+            "STRICT STYLE CHECK: the user does not want em-dashes (—) anywhere in this "
+            "response. Use a comma, colon, period, or parentheses instead. Before "
+            "finishing, mentally scan your draft for the — character and rephrase any "
+            "sentence that has one."
+        )
     if mode == "content" and refine_source is not None:
         parts.append(_REFINE_RULES)
     parts.append(OVERRIDE_NOTE)

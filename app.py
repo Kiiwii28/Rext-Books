@@ -427,10 +427,11 @@ def api_generate():
                 if child.get("type") == "section":
                     exclude_ids.add(child.get("id"))
     context_blocks = _collect_context(book, context_ids, exclude_ids=exclude_ids)
+    overarching = (book.get("settings") or {}).get("overarchingPrompt") or ""
 
     messages = prompts.build_messages(
         mode, user_prompt, tone=tone, depth=depth, refine_source=refine_source,
-        context_blocks=context_blocks,
+        context_blocks=context_blocks, overarching=overarching,
     )
     return _stream_chat_response(messages, {
         "mode": mode, "refine": refine_source is not None, "context": len(context_blocks),
@@ -468,6 +469,7 @@ def api_spark():
         a_title=a_node.get("title") or "A",
         b_title=b_node.get("title") or "B",
         tone=settings.get("tone"), depth=settings.get("depth"),
+        overarching=settings.get("overarchingPrompt"),
     )
     return _stream_chat_response(messages, {"mode": "spark", "sparkMode": spark_mode})
 

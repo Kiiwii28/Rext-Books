@@ -9,43 +9,66 @@ from __future__ import annotations
 
 import prompts
 
-_BASE = prompts._frame(
-    "You are a thought-synthesis engine for a recursive textbook. You take two "
-    "pieces of source material and produce ONE original, self-contained section "
-    "that genuinely combines them.",
-    rules=[
+
+def _base(*, no_diagrams: bool = False, no_images: bool = False) -> str:
+    """Built per-request, not baked in at import time — so an explicit "no
+    diagrams" / "no images" ask (from the user's standing preference or their
+    per-request prompt) can drop the matching RULE+DEFAULT pair entirely,
+    rather than leaving a DEFAULT that plainly tells the model to add one
+    right next to an instruction telling it not to. See prompts.py's
+    ``_content_system_prompt`` for the same treatment on regular content
+    generation."""
+    rules = [
         'Start with a single "# " title line (it becomes the new section title), '
         "then the body.",
         "Output Markdown only: no preamble, no meta-commentary, no code fence around "
         "the whole answer.",
         "Genuinely synthesise the two sources — do not just summarise each in turn.",
+    ]
+    rules.append(
+        "The user does not want any diagrams in this response — do not emit a "
+        "Mermaid code block or any other diagram, full stop."
+        if no_diagrams else
         "Every diagram must be a valid Mermaid fenced code block ('mermaid') with "
-        "plain-text labels.",
+        "plain-text labels."
+    )
+    rules.append(
+        "The user does not want any images in this response — do not emit a "
+        "Markdown image link, full stop."
+        if no_images else
         "Only use a Markdown image link for a real, stable URL you are confident "
         "exists. Never use a placeholder-image service and never invent a URL — use a "
-        "Mermaid diagram or a sentence instead.",
-    ],
-    defaults=[
+        "Mermaid diagram or a sentence instead."
+    )
+
+    defaults = [
         "Structure the body with '##'/'###' subheadings, use concrete examples, and "
         "end with a short 'Takeaway'.",
-        "Include about one small Mermaid diagram where it clarifies the synthesis. "
-        "If the user asks for more, comply — up to about four.",
-        "Keep each Mermaid diagram page-sized: at most ~10 nodes, short labels, and "
-        "left-to-right ('LR') flow for any long chain so it stays wide, not tall.",
-        "Keep it a focused section.",
-    ],
-)
+    ]
+    if not no_diagrams:
+        defaults.append(
+            "Include about one small Mermaid diagram where it clarifies the synthesis. "
+            "If the user asks for more, comply — up to about four."
+        )
+        defaults.append(
+            "Keep each Mermaid diagram page-sized: at most ~10 nodes, short labels, and "
+            "left-to-right ('LR') flow for any long chain so it stays wide, not tall."
+        )
+    defaults.append("Keep it a focused section.")
 
-
-def _mode(specific: str) -> str:
-    return _BASE + "\n\nMODE:\n" + specific.strip()
+    return prompts._frame(
+        "You are a thought-synthesis engine for a recursive textbook. You take two "
+        "pieces of source material and produce ONE original, self-contained section "
+        "that genuinely combines them.",
+        rules=rules, defaults=defaults,
+    )
 
 
 SPARK_MODES: dict[str, dict[str, str]] = {
     "cross-pollinate": {
         "label": "Cross-Pollinate",
         "blurb": "Synthesise the two topics — shared connections, transferred frameworks, hidden patterns.",
-        "system": _mode(
+        "specific": (
             "Synthesise A and B: identify genuine connections between them, apply a "
             "framework or method from one to the other, and surface the hidden pattern "
             "they share. Aim for a genuinely novel intersection."
@@ -55,7 +78,7 @@ SPARK_MODES: dict[str, dict[str, str]] = {
     "unified-theory": {
         "label": "Unified Theory",
         "blurb": "Find the hidden principle(s) that unify both topics.",
-        "system": _mode(
+        "specific": (
             "Identify the deep unifying principle(s) that connect A and B despite their "
             "surface differences. Reveal the shared underlying structure and show how "
             "both are instances of it."
@@ -65,7 +88,7 @@ SPARK_MODES: dict[str, dict[str, str]] = {
     "contrarian": {
         "label": "Contrarian",
         "blurb": "Devil's advocate — challenge the assumptions, expose hidden costs and risks.",
-        "system": _mode(
+        "specific": (
             "Argue the devil's-advocate position about A, using B as a lens. Challenge "
             "the standard assumptions, expose hidden costs, fragilities and risks, and "
             "make the strongest possible opposing case — rigorously, not glibly."
@@ -75,7 +98,7 @@ SPARK_MODES: dict[str, dict[str, str]] = {
     "socratic": {
         "label": "Socratic Questioning",
         "blurb": "Generate probing questions at the intersection — no answers.",
-        "system": _mode(
+        "specific": (
             "Produce a structured set of probing Socratic questions at the intersection "
             "of A and B — questions that expose hidden assumptions, force definitions, "
             "and provoke deeper thinking. Group them under '##' themes. Override the "
@@ -87,7 +110,7 @@ SPARK_MODES: dict[str, dict[str, str]] = {
     "temporal": {
         "label": "Temporal Dimension",
         "blurb": "Past → Present → Future treatment of the intersection.",
-        "system": _mode(
+        "specific": (
             "Treat the intersection of A and B across time, with three '##' sections: "
             "Past (origins, key figures, evolution), Present (current state, tools, "
             "examples), Future (trends, predictions, wild cards)."
@@ -97,7 +120,7 @@ SPARK_MODES: dict[str, dict[str, str]] = {
     "scale": {
         "label": "Scale Shifting",
         "blurb": "Micro (individual) vs macro (systemic) views of the intersection.",
-        "system": _mode(
+        "specific": (
             "Examine the intersection of A and B at two scales: the micro / individual "
             "level and the macro / systemic level. Show how the same phenomenon looks "
             "and behaves differently at each, and what emerges only at scale."
@@ -107,7 +130,7 @@ SPARK_MODES: dict[str, dict[str, str]] = {
     "metaphor": {
         "label": "Metaphor Mapping",
         "blurb": "Explain the link via 3 metaphors from unrelated domains.",
-        "system": _mode(
+        "specific": (
             "Explain the relationship between A and B through exactly three vivid, "
             "extended metaphors, each drawn from a different unrelated domain (e.g. "
             "biology, architecture, music, cooking, geology). Develop each metaphor "
@@ -118,7 +141,7 @@ SPARK_MODES: dict[str, dict[str, str]] = {
     "missing-node": {
         "label": "Missing Node Detection",
         "blurb": "Find the bridging concept that should exist between them — then write it.",
-        "system": _mode(
+        "specific": (
             "First, in one short paragraph, identify precisely what is MISSING between A "
             "and B — the bridging concept, comparison, or section that should exist but "
             "doesn't. Then write that bridging section in full."
@@ -128,7 +151,7 @@ SPARK_MODES: dict[str, dict[str, str]] = {
     "what-if": {
         "label": "What If?",
         "blurb": "Counterfactual scenarios at the intersection, then explore the best one.",
-        "system": _mode(
+        "specific": (
             "Generate 4-6 sharp 'What if…' counterfactual scenarios at the intersection "
             "of A and B (list them under a '## Scenarios' heading), then pick the most "
             "revealing one and explore its consequences in depth."
@@ -138,7 +161,7 @@ SPARK_MODES: dict[str, dict[str, str]] = {
     "connections-map": {
         "label": "Connections Map",
         "blurb": "Enumerate the links, rate their strength, flag the unexpected ones.",
-        "system": _mode(
+        "specific": (
             "Map the connections between A and B: enumerate the concrete links as a "
             "list, rate each link's strength (strong / moderate / weak / speculative), "
             "and call out the connections that are unexpected or usually overlooked. "
@@ -163,16 +186,37 @@ def modes_summary() -> dict[str, dict[str, str]]:
 
 def build_spark_messages(mode_key: str, user_prompt: str, a_text: str, b_text: str,
                          *, a_title: str = "A", b_title: str = "B",
-                         tone: str | None = None, depth: str | None = None) -> list[dict]:
+                         tone: str | None = None, depth: str | None = None,
+                         overarching: str | None = None) -> list[dict]:
     m = SPARK_MODES.get(mode_key)
     if not m:
         raise ValueError(f"unknown spark mode: {mode_key!r}")
 
-    parts = [m["system"]]
+    overarching = (overarching or "").strip()
+    combined_hint = f"{overarching}\n{user_prompt or ''}"
+    base = _base(
+        no_diagrams=bool(prompts._NO_DIAGRAMS_RE.search(combined_hint)),
+        no_images=bool(prompts._NO_IMAGES_RE.search(combined_hint)),
+    )
+    parts = [base + "\n\nMODE:\n" + m["specific"].strip()]
+
     style = [h for h in (prompts._TONE_HINT.get(tone or ""),
                          prompts._DEPTH_HINT.get(depth or "")) if h]
     if style:
         parts.append("STYLE (a DEFAULT — the user may override): " + " ".join(style))
+    if overarching:
+        parts.append(
+            "USER'S STANDING PREFERENCE for this book — apply it throughout this "
+            "response, even where it means skipping something a DEFAULT above "
+            "suggested (RULES still win if there's a genuine conflict): " + overarching
+        )
+    if prompts._EM_DASH_RE.search(combined_hint):
+        parts.append(
+            "STRICT STYLE CHECK: the user does not want em-dashes (—) anywhere in this "
+            "response. Use a comma, colon, period, or parentheses instead. Before "
+            "finishing, mentally scan your draft for the — character and rephrase any "
+            "sentence that has one."
+        )
     parts.append(prompts.OVERRIDE_NOTE)
 
     source = (
