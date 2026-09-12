@@ -1,12 +1,16 @@
-// Export modal: choose format (PDF / Markdown) + colour palette, then download.
+// Export modal: choose format (PDF / EPUB / Markdown / JSON), a colour
+// palette, and which parts of the book to actually include, then download.
 
 import * as store from "./store.js";
 import { getPalettes, getHealth, exportHref, printHref } from "./api.js";
+
+const TYPE_ICON = { heading: "H", subheading: "S", section: "¶" };
 
 let els = {};
 let palettes = {};
 let fmt = "pdf";
 let pdfNative = true;
+let included = new Set();   // node ids currently included in the export
 
 export async function mountExport(refs) {
   els = refs;
@@ -29,7 +33,96 @@ export async function mountExport(refs) {
     });
   });
 
+  els.selectAllBtn.addEventListener("click", () => {
+    included = new Set(allIds(store.getBook()?.nodes || []));
+    renderContentTree();
+  });
+  els.selectNoneBtn.addEventListener("click", () => {
+    included = new Set();
+    renderContentTree();
+  });
+
   els.goBtn.addEventListener("click", go);
+}
+
+// ---- content-to-include tree (cascading select, like the context picker) --
+
+function allIds(nodes, acc = []) {
+  for (const n of nodes) { acc.push(n.id); allIds(n.children || [], acc); }
+  return acc;
+}
+function subtreeIds(node, acc = []) {
+  acc.push(node.id);
+  for (const c of node.children || []) subtreeIds(c, acc);
+  return acc;
+}
+function subtreeCounts(node) {
+  let total = 0, inc = 0;
+  (function rec(n) {
+    total++;
+    if (included.has(n.id)) inc++;
+    for (const c of n.children || []) rec(c);
+  })(node);
+  return { total, inc };
+}
+
+function toggleInclude(node) {
+  const { total, inc } = subtreeCounts(node);
+  const turnOn = inc < total;   // indeterminate or fully-off -> select the whole subtree; fully-on -> clear it
+  for (const id of subtreeIds(node)) turnOn ? included.add(id) : included.delete(id);
+  renderContentTree();
+}
+
+function renderContentTree() {
+  const book = store.getBook();
+  els.contentTree.innerHTML = "";
+  if (book) els.contentTree.append(buildList(book.nodes || []));
+
+  const all = book ? allIds(book.nodes || []) : [];
+  const total = all.length;
+  const n = all.filter((id) => included.has(id)).length;
+  els.contentHint.textContent = total === 0 ? ""
+    : n === total ? `All ${total} blocks included.`
+    : n === 0 ? "Nothing selected — pick at least one block to export."
+    : `${n} of ${total} blocks included.`;
+  els.goBtn.disabled = total > 0 && n === 0;
+}
+
+function buildList(nodes) {
+  const ul = document.createElement("ul");
+  ul.className = "ect-list";
+  for (const n of nodes) {
+    const { total, inc } = subtreeCounts(n);
+    const li = document.createElement("li");
+    const row = document.createElement("label");
+    row.className = "ect-row" + (inc === total ? " ect-checked" : "");
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = inc === total;
+    cb.indeterminate = inc > 0 && inc < total;
+    cb.addEventListener("change", () => toggleInclude(n));
+    const kind = document.createElement("span");
+    kind.className = "ect-kind";
+    kind.textContent = TYPE_ICON[n.type] || "·";
+    const title = document.createElement("span");
+    title.className = "ect-title";
+    title.textContent = n.type === "section" ? "Content" : (n.title || "(untitled)");
+    row.append(cb, kind, title);
+    li.append(row);
+    if ((n.children || []).length) li.append(buildList(n.children));
+    ul.append(li);
+  }
+  return ul;
+}
+
+/** Ids to leave OUT of the export, or null if everything's included
+ *  (the common case — keeps the export URL unchanged by default). */
+function excludedIds() {
+  const book = store.getBook();
+  if (!book) return null;
+  const all = allIds(book.nodes || []);
+  const ex = all.filter((id) => !included.has(id));
+  return ex.length ? ex : null;
 }
 
 function renderSwatches() {
@@ -57,11 +150,14 @@ function markSelected() {
 }
 
 function syncFormat() {
-  els.paletteField.hidden = fmt !== "pdf";
+  els.paletteField.hidden = fmt !== "pdf" && fmt !== "epub";
   if (fmt === "pdf") {
     els.note.textContent = pdfNative
-      ? "A styled PDF will download — cover page, contents, working links."
+      ? "A styled PDF will download — cover page, contents, working links, and a bookmarks/navigation pane matching your headings."
       : "No PDF renderer on the server, so this opens a print-ready page — choose “Save as PDF” (turn on “Background graphics”).";
+  } else if (fmt === "epub") {
+    els.note.textContent = "An .epub file for e-readers — same look as the PDF, with a working table of contents." +
+      (pdfNative ? "" : " (No headless browser on the server, so any Mermaid diagrams stay as plain text.)");
   } else if (fmt === "md") {
     els.note.textContent = "A .md file will download. Local images use absolute URLs to this server.";
   } else {
@@ -70,7 +166,10 @@ function syncFormat() {
 }
 
 function open() {
-  if (!store.getBook()) return;
+  const book = store.getBook();
+  if (!book) return;
+  included = new Set(allIds(book.nodes || []));
+  renderContentTree();
   markSelected();
   syncFormat();
   els.backdrop.hidden = false;
@@ -81,12 +180,13 @@ function go() {
   const book = store.getBook();
   if (!book) return;
   const palette = store.getSetting("palette");
-  if (fmt === "md" || fmt === "json") {
-    window.location.href = exportHref(book.id, fmt);
+  const exclude = excludedIds();
+  if (fmt === "md" || fmt === "json" || fmt === "epub") {
+    window.location.href = exportHref(book.id, fmt, palette, exclude);
   } else if (pdfNative) {
-    window.location.href = exportHref(book.id, "pdf", palette);
+    window.location.href = exportHref(book.id, "pdf", palette, exclude);
   } else {
-    window.open(printHref(book.id, palette), "_blank", "noopener");
+    window.open(printHref(book.id, palette, exclude), "_blank", "noopener");
   }
   close();
 }

@@ -66,6 +66,7 @@ def url_to_pdf(url: str, *, timeout: int = 60) -> bytes:
             "--print-to-pdf-no-header",         # older flag name, harmless if unknown
             "--run-all-compositor-stages-before-draw",
             "--virtual-time-budget=25000",      # wait for images, fonts, Mermaid
+            "--generate-pdf-document-outline",  # bookmarks/nav pane, built from <h1>-<h6>
             f"--print-to-pdf={out}",
             url,
         ]
@@ -74,3 +75,35 @@ def url_to_pdf(url: str, *, timeout: int = 60) -> bytes:
             err = proc.stderr.decode("utf-8", "replace")[-500:]
             raise RuntimeError(f"Headless browser did not produce a PDF. {err}")
         return out.read_bytes()
+
+
+def dump_rendered_dom(url: str, *, timeout: int = 60) -> str:
+    """Load `url`, let it fully render (Mermaid diagrams, broken-image swaps)
+    via the virtual time budget, and return the post-JS DOM as HTML text.
+
+    Used by the EPUB export: EPUB readers don't run JavaScript, so Mermaid
+    diagrams have to be pre-rendered to static SVG before packaging — this
+    reuses the exact same rendering pass the PDF export already relies on.
+    """
+    exe = find_browser()
+    if not exe:
+        raise RuntimeError("No Chrome/Edge/Chromium found for diagram rendering.")
+    with tempfile.TemporaryDirectory(prefix="rext-dom-") as d:
+        cmd = [
+            exe,
+            "--headless",
+            "--disable-gpu",
+            "--no-sandbox",
+            "--no-first-run",
+            f"--user-data-dir={Path(d) / 'profile'}",
+            "--run-all-compositor-stages-before-draw",
+            "--virtual-time-budget=25000",
+            "--dump-dom",
+            url,
+        ]
+        proc = subprocess.run(cmd, capture_output=True, timeout=timeout)
+        text = proc.stdout.decode("utf-8", "replace")
+        if not text.strip():
+            err = proc.stderr.decode("utf-8", "replace")[-500:]
+            raise RuntimeError(f"Headless browser did not return any DOM. {err}")
+        return text

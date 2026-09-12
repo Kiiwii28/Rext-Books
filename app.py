@@ -19,6 +19,7 @@ from werkzeug.utils import secure_filename
 
 import config
 import deepseek
+import epub
 import export
 import images
 import palettes
@@ -48,6 +49,46 @@ def index():
 def health():
     return jsonify({"status": "ok", "model": config.DEEPSEEK_MODEL,
                     "pdf": export.pdf_available(), "pdfEngine": export.pdf_engine()})
+
+
+# --------------------------------------------------------------------------- #
+#  Settings (API key)                                                          #
+# --------------------------------------------------------------------------- #
+
+@app.get("/api/settings")
+def api_get_settings():
+    return jsonify({
+        "hasApiKey": bool(config.get_api_key()),
+        "keySource": config.api_key_source(),   # "settings" | "env" | "none"
+        "model": config.DEEPSEEK_MODEL,
+        "author": config.get_author(),
+    })
+
+
+@app.post("/api/settings")
+def api_save_settings():
+    data = request.get_json(silent=True) or {}
+    if "apiKey" not in data and "author" not in data:
+        return jsonify({"error": "apiKey or author is required"}), 400
+    if "apiKey" in data:
+        config.set_api_key(data.get("apiKey") or "")
+    if "author" in data:
+        config.set_author(data.get("author") or "")
+    return jsonify({
+        "hasApiKey": bool(config.get_api_key()),
+        "keySource": config.api_key_source(),
+        "author": config.get_author(),
+    })
+
+
+@app.post("/api/settings/test")
+def api_test_settings():
+    data = request.get_json(silent=True) or {}
+    key = (data.get("apiKey") or "").strip() or config.get_api_key()
+    if not key:
+        return jsonify({"ok": False, "error": "No API key to test."}), 400
+    ok, message = deepseek.test_key(key)
+    return jsonify({"ok": ok, "error": None if ok else message})
 
 
 @app.post("/render")
@@ -183,11 +224,22 @@ def serve_asset(book_id: str, filename: str):
 #  Export                                                                      #
 # --------------------------------------------------------------------------- #
 
+def _parse_exclude() -> set:
+    """Node ids to leave out of an export — from the Export dialog's content
+    picker. Absent/empty means "export everything" (unchanged default)."""
+    raw = request.args.get("exclude", "")
+    return {x for x in raw.split(",") if x}
+
+
 @app.get("/api/books/<book_id>/export.json")
 def export_json(book_id: str):
     book = store.get_book(book_id)
     if book is None:
         return jsonify({"error": "not found"}), 404
+    exclude_ids = _parse_exclude()
+    if exclude_ids:
+        book = dict(book)
+        book["nodes"] = export.filter_book_nodes(book.get("nodes") or [], exclude_ids)
     return Response(json.dumps(book, ensure_ascii=False, indent=2),
                     mimetype="application/json; charset=utf-8", headers={
         "Content-Disposition": f'attachment; filename="{_slug(book.get("title"))}.json"',
@@ -199,7 +251,7 @@ def export_md(book_id: str):
     book = store.get_book(book_id)
     if book is None:
         return jsonify({"error": "not found"}), 404
-    md = export.book_to_markdown(book, base_url=request.url_root)
+    md = export.book_to_markdown(book, base_url=request.url_root, exclude_ids=_parse_exclude())
     return Response(md, mimetype="text/markdown; charset=utf-8", headers={
         "Content-Disposition": f'attachment; filename="{_slug(book.get("title"))}.md"',
     })
@@ -213,9 +265,24 @@ def export_pdf(book_id: str):
     if not export.pdf_available():
         return jsonify({"error": export.pdf_error()}), 501
     palette = request.args.get("palette") or (book.get("settings") or {}).get("palette")
-    pdf = export.book_to_pdf(book, palette, base_url=request.url_root)
+    pdf = export.book_to_pdf(book, palette, base_url=request.url_root, exclude_ids=_parse_exclude())
     return Response(pdf, mimetype="application/pdf", headers={
         "Content-Disposition": f'attachment; filename="{_slug(book.get("title"))}.pdf"',
+    })
+
+
+@app.get("/api/books/<book_id>/export.epub")
+def export_epub(book_id: str):
+    book = store.get_book(book_id)
+    if book is None:
+        return jsonify({"error": "not found"}), 404
+    palette = request.args.get("palette") or (book.get("settings") or {}).get("palette")
+    try:
+        data = epub.book_to_epub(book, palette, base_url=request.url_root, exclude_ids=_parse_exclude())
+    except Exception as exc:
+        return jsonify({"error": f"EPUB export failed: {exc}"}), 500
+    return Response(data, mimetype="application/epub+zip", headers={
+        "Content-Disposition": f'attachment; filename="{_slug(book.get("title"))}.epub"',
     })
 
 
@@ -225,7 +292,7 @@ def export_preview(book_id: str):
     if book is None:
         return jsonify({"error": "not found"}), 404
     palette = request.args.get("palette") or (book.get("settings") or {}).get("palette")
-    html_doc = export.book_to_html(book, palette)
+    html_doc = export.book_to_html(book, palette, exclude_ids=_parse_exclude())
     if request.args.get("print"):
         # Browser "Save as PDF" fallback. Wait for Mermaid (if any) before printing.
         wait = (

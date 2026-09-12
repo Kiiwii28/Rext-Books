@@ -70,3 +70,25 @@ def stream_chat(messages: list[dict], *, temperature: float = 0.7) -> Iterator[s
 def chat(messages: list[dict], *, temperature: float = 0.7) -> str:
     """Non-streaming convenience wrapper."""
     return "".join(stream_chat(messages, temperature=temperature))
+
+
+def test_key(key: str) -> tuple[bool, str]:
+    """Make one minimal request to confirm a key actually works, so Settings
+    can give immediate feedback instead of the user finding out mid-generation."""
+    try:
+        resp = requests.post(
+            _endpoint(),
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+            json={
+                "model": config.DEEPSEEK_MODEL,
+                "messages": [{"role": "user", "content": "Hi"}],
+                "max_tokens": 1,
+                "stream": False,
+            },
+            timeout=(10, 20),
+        )
+    except requests.RequestException as exc:
+        return False, f"Network error: {exc}"
+    if resp.status_code >= 400:
+        return False, f"DeepSeek rejected this key (HTTP {resp.status_code}): {resp.text[:200]}"
+    return True, "Key works ✓"

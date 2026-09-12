@@ -32,6 +32,13 @@ DEEPSEEK_BASE_URL=https://api.deepseek.com
 
 `.env` is gitignored and read only on the server — the key never reaches the browser.
 
+**Or skip `.env` entirely** and set the key from inside the running app: **⚙
+Settings** in the topbar → paste a key → **Save**. It's written to
+`local_settings.json` next to the app (also gitignored, also never sent back to
+the browser) and overrides `.env` if both are present — so a packaged build can
+be handed to someone else with their own key, without them touching a file. If
+neither is set, the app opens Settings automatically on first launch.
+
 ## Run
 
 ```bash
@@ -42,6 +49,13 @@ Open <http://127.0.0.1:5000>.
 
 ## Features
 
+- **Tutorial (🎓)** — a guided, spotlighted tour of the whole app: topbar,
+  panels, the block toolbar, Spark/Bulk/context, the prompt box, section
+  editing. **Next**/**Back** step through it, **Skip** (or `Esc`) ends it
+  anywhere, and the button always restarts from the top. It only shows steps
+  for things that actually exist right now — with no book open you get the
+  topbar/AI-panel tour; open a book with some content and the block-level
+  steps join in too.
 - **Recursive generation** — outline → subheadings → section content, each step a
   streamed DeepSeek call scoped to the selected block.
 - **Notion-style blocks** — drag to reorder, collapse, add, delete, rename inline.
@@ -90,10 +104,15 @@ Open <http://127.0.0.1:5000>.
   can't overflow a PDF page.
 - **Images in sections** — in the editor, **🖼 Image** → paste, drop, upload a file,
   or add a link. Files are stored under `books/assets/<bookId>/`.
-- **Export** — **PDF** (15 palettes), **Markdown**, or **JSON** (the raw book file).
-  **Import** a `.json` book from the topbar. Every save also drops a versioned
-  snapshot in `books/.trash/` (auto-pruned to 8) so a bad edit can't lose work —
-  `GET /api/books/<id>/versions`, `POST /api/books/<id>/restore {file}`.
+- **Export** — **PDF** (15 palettes), **EPUB**, **Markdown**, or **JSON** (the raw
+  book file). **Content to include** in the Export dialog picks which parts of the
+  book actually go in the file — tick a heading and its whole subtree comes along,
+  untick anything you don't want, same cascading-select as Extra Context; defaults
+  to everything. **Import** a `.json` book from the topbar. Every save also drops a
+  versioned snapshot in `books/.trash/` (auto-pruned to 8) so a bad edit can't lose
+  work — `GET /api/books/<id>/versions`, `POST /api/books/<id>/restore {file}`.
+- **Author** — set in **⚙ Settings**; appears on the front page of PDF/EPUB exports
+  (and as a byline in Markdown exports).
 
 ### PDF export
 
@@ -103,6 +122,15 @@ ships with Windows 11, Chrome/Chromium are common elsewhere). The PDF then looks
 exactly like the on-screen preview: cover page, table of contents with working
 links, and the full palette colour.
 
+The PDF also gets a proper **navigation pane / bookmarks outline** — nesting
+every heading and subheading (down to a section's own internal `##` headings)
+the same way your outline tree nests, each entry jumping straight to its page.
+This comes from Chrome's own `--generate-pdf-document-outline` flag, built from
+the real `<h1>`–`<h6>` tags in the rendered page — no extra dependency, and it
+tracks pagination exactly (so it's correct even when content reflows across
+pages as the book grows). Only the headless-Chrome path builds it; the
+WeasyPrint and browser-print-dialog fallbacks below don't.
+
 Detection is automatic (`GET /health` → `pdfEngine`). Set `REXTBOOKS_CHROME` to a
 browser path to override. As a headless-server alternative you can
 `pip install weasyprint` (needs Pango/cairo) — it's used if no browser is found.
@@ -110,6 +138,63 @@ browser path to override. As a headless-server alternative you can
 If neither is available, the Export dialog's **PDF** option opens a palette-styled
 print page and you choose *Save as PDF* (enable *Background graphics*).
 **Markdown export always works.**
+
+### EPUB export
+
+`epub.py` builds the `.epub` by hand (no third-party ebook library) — same
+palette/typography as the PDF, and a proper nested navigation: both an EPUB3
+`nav.xhtml` and an EPUB2-compatible `toc.ncx`, built straight from the book's
+heading/subheading tree. It reuses the exact HTML the PDF prints from (one
+headless-Chrome pass renders every Mermaid diagram to static SVG and swaps any
+broken image for a placeholder — EPUB readers don't run JavaScript, so a live
+diagram render wouldn't work there), then re-packages that into the EPUB
+container: chapters split one-per-top-level-heading, every image (local or
+remote) downloaded and embedded as a real file since EPUB readers don't fetch
+anything over the network, and CSS that wraps long code/tables and caps image
+height so nothing overflows a reader's screen. If no headless browser is
+available, it still produces a valid (if plainer) EPUB — Mermaid blocks show
+as plain text instead of failing the export.
+
+## Packaging a copy for someone else
+
+`launcher.py` is the entry point for a zero-install handoff: it starts the
+server without the dev reloader, opens the person's browser to it, and (on
+Windows) drops a desktop shortcut with a proper icon the first time it runs —
+built from wherever the folder actually ends up, so the whole thing can be
+copied, renamed, or moved and it still works. If it's already running,
+launching it again just opens another tab instead of erroring.
+
+The actual package is a **portable folder**, not a compiled `.exe` — Windows'
+Smart App Control (on by default on most new Windows 11 installs) silently
+blocks unsigned executables with no user override, which killed a PyInstaller
+build in testing. A folder containing the official embeddable Python
+distribution + the app's dependencies pre-installed + `launcher.py`, launched
+via a `.vbs` that calls the (already Microsoft-signed) `pythonw.exe`, sails
+through that same policy untouched — same one-click experience, no install
+step, no console window.
+
+To rebuild it:
+
+```bash
+# 1. Fetch the embeddable Python build matching your venv's version from
+#    https://www.python.org/ftp/python/<version>/python-<version>-embed-amd64.zip
+#    and unzip it into dist-portable/Rextbooks/python/
+
+# 2. Point it at a sibling lib folder — edit dist-portable/Rextbooks/python/python312._pth
+#    to add "..\pylibs" (relative to the python/ folder) as an extra line.
+
+# 3. Install the runtime deps into that folder (not the app's own .venv):
+pip install --target dist-portable/Rextbooks/pylibs --no-compile \
+  Flask requests python-dotenv Markdown
+
+# 4. Copy every .py file in the project root (app.py, config.py, epub.py,
+#    export.py, etc.), templates/, static/, launcher.py, and an .ico into
+#    dist-portable/Rextbooks/, then zip it.
+```
+
+No `.env` or `local_settings.json` goes into the package — the recipient
+pastes their own key into **⚙ Settings**, which opens automatically the first
+time there's no key configured at all.
 
 ## How it works
 
@@ -127,7 +212,8 @@ print page and you choose *Save as PDF* (enable *Background graphics*).
 | `images.py` | Validate + store section images (magic-byte sniff, size caps) |
 | `palettes.py` | The 15 export colour palettes |
 | `export.py` | `book_to_markdown` / `book_to_html` / `book_to_pdf` (recursive, any depth) |
-| `pdfgen.py` | Renders a URL to PDF via a headless Chrome/Edge/Chromium |
+| `epub.py` | `book_to_epub` — nav.xhtml + toc.ncx, embedded images, pre-rendered Mermaid SVG |
+| `pdfgen.py` | Renders a URL to PDF via a headless Chrome/Edge/Chromium; also dumps the post-JS DOM for EPUB |
 
 Books are `books/<id>.json`. The browser owns the tree and PUTs the whole book
 (debounced, serialized autosave); the server just reads/writes files. Set
@@ -148,6 +234,10 @@ Books are `books/<id>.json`. The browser owns the tree and PUTs the whole book
 | `js/export-panel.js` | export modal: PDF/MD/JSON + palette swatches |
 | `js/spark-panel.js` | Spark modal: two sources, ten modes, prompt, streaming, node insertion |
 | `js/main.js` | bootstrap, book switching, import |
+| `js/book-picker.js` | custom-styled book switcher (a native `<select>`'s dropdown can't be skinned) |
+| `js/tour.js` | the 🎓 Tutorial — spotlighted, step-by-step walkthrough |
+| `js/settings-panel.js` | ⚙ Settings modal — API key, author |
+| `js/resize.js` | draggable divider between the Outline and AI Assistant panels |
 | `css/style.css` | mint-green base, translucent teal glass panels, shine + iridescence |
 
 ### Node types

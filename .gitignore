@@ -1,5 +1,9 @@
 .env
+local_settings.json
 .venv/
+dist-portable/
+build-assets/
+error.log
 __pycache__/
 *.pyc
 books/*.json

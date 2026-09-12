@@ -188,8 +188,13 @@ body {
 .topbar-center { display: flex; justify-content: center; }
 .topbar-actions { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
 
-.book-picker {
+/* Custom book switcher — a native <select>'s open dropdown can't be skinned
+   consistently (it always renders in the OS's own colours/font), so this is
+   a small combobox built from a button + a styled listbox instead. */
+.book-picker { position: relative; width: max-content; max-width: 320px; min-width: 170px; }
+.book-picker-btn {
   appearance: none;
+  width: 100%;
   font: inherit;
   font-size: 13px;
   font-weight: 600;
@@ -197,15 +202,51 @@ body {
   background: var(--glass-solid);
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
-  padding: 7px 30px 7px 12px;
-  max-width: 320px;
+  padding: 7px 12px;
   cursor: pointer;
   box-shadow: var(--shadow-sm), var(--shine);
-  background-image: linear-gradient(45deg, transparent 50%, var(--ink-soft) 50%),
-                    linear-gradient(135deg, var(--ink-soft) 50%, transparent 50%);
-  background-position: right 14px center, right 9px center;
-  background-size: 5px 5px, 5px 5px;
-  background-repeat: no-repeat;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  text-align: left;
+}
+.book-picker-btn:hover { border-color: var(--accent-2); }
+.book-picker-btn:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 50%, transparent); outline-offset: 1px;
+}
+.book-picker-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.book-picker-arrow {
+  flex: none; width: 0; height: 0;
+  border-left: 4px solid transparent; border-right: 4px solid transparent;
+  border-top: 5px solid var(--ink-soft);
+  transition: transform .12s ease;
+}
+.book-picker-btn[aria-expanded="true"] .book-picker-arrow { transform: rotate(180deg); }
+
+.book-picker-list {
+  /* fixed, and moved to <body> while open (see book-picker.js) — .topbar
+     uses backdrop-filter, which (like any filter) makes it a containing
+     block for fixed descendants, trapping them inside its own clipped box
+     otherwise. Left/top/width are set from JS to track the button. */
+  position: fixed;
+  width: max-content;
+  max-width: min(420px, calc(100vw - 32px));
+  max-height: 60vh; overflow-y: auto;
+  list-style: none; margin: 0; padding: 5px;
+  background: var(--glass-solid);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md), var(--shine);
+  z-index: 40;
+}
+.book-picker-opt {
+  padding: 7px 10px; border-radius: 7px;
+  font-size: 13px; font-weight: 600; color: var(--ink-soft);
+  cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  outline: none;
+}
+.book-picker-opt:hover, .book-picker-opt:focus { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--ink); }
+.book-picker-opt.active {
+  background: linear-gradient(180deg, var(--accent-2), var(--accent));
+  color: var(--accent-ink);
 }
 
 .save-state {
@@ -282,6 +323,11 @@ body {
 .mini-btn:hover { background: var(--glass); color: var(--ink); }
 #btn-theme { font-size: 15px; line-height: 24px; }
 #btn-theme:hover { border-color: var(--line-strong); }
+#btn-settings.needs-key {
+  color: var(--err);
+  border-color: color-mix(in srgb, var(--err) 40%, transparent);
+  background: color-mix(in srgb, var(--err) 12%, transparent);
+}
 
 /* ---------- workspace ---------- */
 .workspace {
@@ -1021,6 +1067,7 @@ body.is-resizing-y, body.is-resizing-y * { cursor: ns-resize !important; user-se
 .modal-head { border-bottom: 1px solid var(--line); }
 .modal-head h2 { margin: 0; font-size: 16px; letter-spacing: -0.01em; }
 .modal-foot { border-top: 1px solid var(--line); gap: 8px; }
+.modal-foot-group { display: flex; gap: 8px; }
 .modal-body { padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; }
 .field { display: flex; flex-direction: column; gap: 7px; }
 .field-label {
@@ -1028,6 +1075,46 @@ body.is-resizing-y, body.is-resizing-y * { cursor: ns-resize !important; user-se
   text-transform: uppercase; color: var(--ink-faint);
 }
 .export-note { margin: 0; font-size: 12px; color: var(--ink-soft); line-height: 1.5; }
+
+.settings-key-row { display: flex; gap: 6px; }
+#settings-key-input, #settings-author-input {
+  flex: 1; font: inherit; font-size: 13px; padding: 8px 10px;
+  border: 1px solid var(--line-strong); border-radius: 7px;
+  background: var(--glass-solid); color: var(--ink);
+  width: 100%;
+}
+#settings-key-input { font-family: var(--mono); }
+#settings-key-input:focus, #settings-author-input:focus {
+  outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 1px;
+}
+
+.export-content-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.export-content-actions { display: flex; gap: 10px; }
+.mini-link {
+  border: 0; background: transparent; color: var(--accent);
+  font-size: 11.5px; font-weight: 700; cursor: pointer; padding: 2px 0;
+}
+.mini-link:hover { text-decoration: underline; }
+.export-content-tree {
+  max-height: 220px; overflow-y: auto;
+  border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
+  padding: 6px 8px; background: var(--glass);
+}
+.ect-list { list-style: none; margin: 0; padding: 0; }
+.ect-list .ect-list { margin-left: 17px; }
+.ect-row {
+  display: flex; align-items: center; gap: 7px;
+  padding: 4px 5px; border-radius: 6px; cursor: pointer; font-size: 12.5px;
+}
+.ect-row:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.ect-row input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px; flex: none; margin: 0; }
+.ect-kind {
+  font-size: 9px; font-weight: 800; flex: none; line-height: 1;
+  padding: 3px 4px; border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 26%, transparent); color: var(--ink);
+}
+.ect-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-soft); }
+.ect-row.ect-checked .ect-title { color: var(--ink); }
 
 .palette-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px;
@@ -1043,6 +1130,64 @@ body.is-resizing-y, body.is-resizing-y * { cursor: ns-resize !important; user-se
 .sw-strip { display: flex; height: 26px; border-radius: 6px; overflow: hidden; border: 1px solid var(--line); }
 .sw-strip i { flex: 1; }
 .sw-name { font-size: 11.5px; font-weight: 600; color: var(--ink-soft); text-align: left; }
+
+/* ---------- tutorial tour ---------- */
+.tour-mask-strip {
+  position: fixed;
+  background: color-mix(in srgb, var(--ink) 58%, transparent);
+  z-index: 9998;
+  pointer-events: auto;
+}
+.tour-shield {
+  position: fixed;
+  z-index: 9998;
+  pointer-events: auto;
+  border-radius: 8px;
+}
+.tour-spotlight {
+  position: relative;
+  z-index: 9999;
+  border-radius: 8px;
+  opacity: 1 !important;
+  transform: none !important;
+  /* box-shadow (not outline) so the ring reliably follows border-radius on
+     every element type, including native form controls like <select>. */
+  box-shadow:
+    0 0 0 3px var(--accent),
+    0 0 0 6px color-mix(in srgb, var(--accent) 30%, transparent),
+    0 0 26px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.tour-spotlight .b-tools,
+.tour-spotlight .b-handle { opacity: 1 !important; transform: none !important; }
+
+.tour-card {
+  position: fixed;
+  z-index: 10000;
+  width: min(340px, calc(100vw - 24px));
+  border-radius: var(--radius);
+  background: var(--glass-solid);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-md), var(--shine);
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.tour-card-head { display: flex; align-items: center; justify-content: space-between; }
+.tour-counter {
+  font-size: 10px; font-weight: 700; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--ink-faint);
+}
+.tour-skip {
+  border: 0; background: transparent; color: var(--ink-soft);
+  font-size: 12px; font-weight: 600; cursor: pointer;
+  padding: 3px 7px; border-radius: 6px;
+}
+.tour-skip:hover { background: var(--glass); color: var(--ink); }
+.tour-title { margin: 0; font-size: 15px; letter-spacing: -.01em; }
+.tour-body { margin: 0; font-size: 13px; line-height: 1.55; color: var(--ink-soft); }
+.tour-body b { color: var(--ink); }
+.tour-card-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 4px; }
 
 /* ---------- responsive ---------- */
 @media (max-width: 900px) {

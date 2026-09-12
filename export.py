@@ -16,6 +16,7 @@ from urllib.parse import quote
 
 import importlib.util
 
+import config
 import palettes
 import pdfgen
 from rendering import render_markdown
@@ -88,13 +89,19 @@ def _strip_dupe_heading(md: str, title: str) -> str:
 #  Markdown                                                                    #
 # --------------------------------------------------------------------------- #
 
-def book_to_markdown(book: dict, base_url: str = "") -> str:
+def book_to_markdown(book: dict, base_url: str = "", exclude_ids: set | None = None) -> str:
+    exclude_ids = exclude_ids or set()
     out: list[str] = [f"# {book.get('title', 'Untitled')}", ""]
+    author = config.get_author()
+    if author:
+        out += [f"*by {author}*", ""]
     if book.get("topic"):
         out += [f"*A textbook on {book['topic']}.*", ""]
 
     def walk(nodes: list[dict], level: int, container_title: str) -> None:
         for n in nodes:
+            if n.get("id") in exclude_ids:
+                continue
             if n.get("type") == "section":
                 body = _absolutise(n.get("content") or "", base_url)
                 body = _strip_dupe_heading(body, container_title)
@@ -106,6 +113,21 @@ def book_to_markdown(book: dict, base_url: str = "") -> str:
 
     walk(book.get("nodes") or [], 2, book.get("title", ""))
     return "\n".join(out).strip() + "\n"
+
+
+def filter_book_nodes(nodes: list[dict], exclude_ids: set | None) -> list[dict]:
+    """Prune excluded nodes (and their subtrees) out of a node list, for the
+    JSON export — a shallow-ish copy so the caller's own tree isn't mutated."""
+    if not exclude_ids:
+        return nodes
+    out: list[dict] = []
+    for n in nodes:
+        if n.get("id") in exclude_ids:
+            continue
+        n2 = dict(n)
+        n2["children"] = filter_book_nodes(n.get("children") or [], exclude_ids)
+        out.append(n2)
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -220,6 +242,8 @@ def _doc_css(p: dict[str, str]) -> str:
     .cover h1 {{ font-size: 34pt; }}
     .cover .band {{ height: 5pt; width: 46mm; background: {p['accent']}; margin: 1.4em 0 1.8em; }}
     .cover .topic {{ font-size: 13pt; font-style: italic; color: {p['muted']}; }}
+    .cover .author {{ margin-top: .6em; font-size: 11.5pt; color: {p['heading']};
+      font-family: 'Helvetica Neue', Arial, sans-serif; font-weight: 600; }}
     .cover .date {{ margin-top: 60mm; font-size: 9.5pt; color: {p['muted']};
       font-family: 'Helvetica Neue', Arial, sans-serif; letter-spacing: .03em; }}
 
@@ -240,17 +264,21 @@ def _doc_css(p: dict[str, str]) -> str:
     """
 
 
-def book_to_html(book: dict, palette_name: str | None = None) -> str:
+def book_to_html(book: dict, palette_name: str | None = None, exclude_ids: set | None = None) -> str:
     p = palettes.get(palette_name)
+    exclude_ids = exclude_ids or set()
     esc = _html.escape
     title = esc(book.get("title", "Untitled"))
     topic = esc(book.get("topic", ""))
+    author = esc(config.get_author())
 
     toc: list[str] = []
     body: list[str] = []
 
     def walk(nodes: list[dict], level: int, container_title: str, in_toc: bool) -> None:
         for n in nodes:
+            if n.get("id") in exclude_ids:
+                continue
             if n.get("type") == "section":
                 if (n.get("content") or "").strip():
                     md = _strip_dupe_heading(n["content"], container_title)
@@ -284,6 +312,7 @@ def book_to_html(book: dict, palette_name: str | None = None) -> str:
 <div class="cover">
   <h1>{title}</h1><div class="band"></div>
   {f'<div class="topic">A textbook on {topic}</div>' if topic else ''}
+  {f'<div class="author">by {author}</div>' if author else ''}
   <div class="date">Generated {date.today().isoformat()} &middot; Rextbooks</div>
 </div>
 <nav class="toc"><h2>Contents</h2><ol>{''.join(toc)}</ol></nav>
@@ -340,15 +369,17 @@ def _mermaid_script(p: dict[str, str]) -> str:
     )
 
 
-def book_to_pdf(book: dict, palette_name: str | None, base_url: str) -> bytes:
+def book_to_pdf(book: dict, palette_name: str | None, base_url: str, exclude_ids: set | None = None) -> bytes:
     engine = pdf_engine()
     if engine == "browser":
         url = (
             f"{base_url.rstrip('/')}/api/books/{book['id']}/preview"
             f"?palette={quote(palette_name or '')}"
         )
+        if exclude_ids:
+            url += f"&exclude={quote(','.join(exclude_ids))}"
         return pdfgen.url_to_pdf(url)
     if engine == "weasyprint":
-        html_doc = book_to_html(book, palette_name)
+        html_doc = book_to_html(book, palette_name, exclude_ids)
         return _load_weasyprint()(string=html_doc, base_url=base_url).write_pdf()
     raise RuntimeError(pdf_error())

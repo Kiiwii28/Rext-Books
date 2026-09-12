@@ -35,6 +35,18 @@ export const renderMarkdown = (text) =>
 
 export const getPalettes = () => fetch("/api/palettes").then(j);
 export const getHealth = () => fetch("/health").then(j);
+
+export const getSettings = () => fetch("/api/settings").then(j);
+export const saveSettings = (partial) =>
+  fetch("/api/settings", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(partial),
+  }).then(j);
+export const testApiKey = (apiKey) =>
+  fetch("/api/settings/test", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ apiKey }),
+  }).then(j);
 export const getSparkModes = () => fetch("/api/spark-modes").then(j);
 export const getVersions = (id) => fetch(`/api/books/${id}/versions`).then(j);
 export const restoreVersion = (id, file) =>
@@ -63,13 +75,23 @@ export function uploadImage(bookId, payload) {
   return fetch(`/api/books/${bookId}/images`, opts).then(j);
 }
 
-export const exportHref = (bookId, fmt, palette) =>
-  fmt === "md" ? `/api/books/${bookId}/export.md`
-  : fmt === "json" ? `/api/books/${bookId}/export.json`
-  : `/api/books/${bookId}/export.pdf?palette=${encodeURIComponent(palette || "")}`;
+function withExclude(url, excludeIds) {
+  if (!excludeIds || !excludeIds.length) return url;
+  const sep = url.includes("?") ? "&" : "?";
+  return url + sep + "exclude=" + encodeURIComponent(excludeIds.join(","));
+}
 
-export const printHref = (bookId, palette) =>
-  `/api/books/${bookId}/preview?print=1&palette=${encodeURIComponent(palette || "")}`;
+export const exportHref = (bookId, fmt, palette, excludeIds) =>
+  withExclude(
+    fmt === "md" ? `/api/books/${bookId}/export.md`
+    : fmt === "json" ? `/api/books/${bookId}/export.json`
+    : fmt === "epub" ? `/api/books/${bookId}/export.epub`
+    : `/api/books/${bookId}/export.pdf?palette=${encodeURIComponent(palette || "")}`,
+    excludeIds,
+  );
+
+export const printHref = (bookId, palette, excludeIds) =>
+  withExclude(`/api/books/${bookId}/preview?print=1&palette=${encodeURIComponent(palette || "")}`, excludeIds);
 
 /**
  * Stream a generation. Returns a controller with `.abort()`.

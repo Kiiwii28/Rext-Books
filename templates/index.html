@@ -30,7 +30,7 @@
       </div>
     </div>
     <div class="topbar-center">
-      <select id="book-picker" class="book-picker" aria-label="Open book"></select>
+      <div id="book-picker" class="book-picker" aria-label="Open book"></div>
     </div>
     <div class="topbar-actions">
       <button id="btn-new-book" class="btn ghost">New book</button>
@@ -38,6 +38,8 @@
       <input id="import-file" type="file" accept=".json,application/json" hidden />
       <button id="btn-export" class="btn ghost" title="Export this book">Export</button>
       <button id="btn-delete-book" class="btn ghost danger" title="Delete this book">Delete</button>
+      <button id="btn-tutorial" class="mini-btn" title="Tutorial" aria-label="Start the tutorial">🎓</button>
+      <button id="btn-settings" class="mini-btn" title="Settings" aria-label="Settings">⚙</button>
       <button id="btn-theme" class="mini-btn" title="Theme" aria-label="Toggle light / dark theme"></button>
       <span id="save-state" class="save-state" aria-live="polite">Saved</span>
     </div>
@@ -160,6 +162,7 @@
           <span class="field-label">Format</span>
           <div class="segmented" id="export-format" role="tablist">
             <button class="seg-btn active" data-fmt="pdf" role="tab">PDF</button>
+            <button class="seg-btn" data-fmt="epub" role="tab">EPUB</button>
             <button class="seg-btn" data-fmt="md" role="tab">Markdown</button>
             <button class="seg-btn" data-fmt="json" role="tab">JSON</button>
           </div>
@@ -168,6 +171,18 @@
         <div class="field" id="palette-field">
           <span class="field-label">Colour palette</span>
           <div id="palette-grid" class="palette-grid"></div>
+        </div>
+
+        <div class="field">
+          <div class="export-content-head">
+            <span class="field-label">Content to include</span>
+            <div class="export-content-actions">
+              <button type="button" id="export-select-all" class="mini-link">Select all</button>
+              <button type="button" id="export-select-none" class="mini-link">Select none</button>
+            </div>
+          </div>
+          <div id="export-content-tree" class="export-content-tree"></div>
+          <p id="export-content-hint" class="export-note"></p>
         </div>
 
         <p id="export-note" class="export-note"></p>
@@ -209,6 +224,52 @@
         <button id="spark-reset" class="btn ghost">Reset prompt</button>
         <button id="spark-go" class="btn primary sheen">Generate</button>
         <button id="spark-stop" class="btn ghost" hidden>Stop</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="settings-modal" class="modal-backdrop" hidden>
+    <div class="modal glass" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <div class="modal-head">
+        <h2 id="settings-title">⚙ Settings</h2>
+        <button id="settings-close" class="mini-btn" aria-label="Close">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <div id="settings-status" class="ai-status" hidden></div>
+
+        <div class="field">
+          <span class="field-label">DeepSeek API key</span>
+          <div class="settings-key-row">
+            <input id="settings-key-input" type="password" placeholder="sk-…"
+                   autocomplete="off" spellcheck="false" />
+            <button id="settings-key-toggle" type="button" class="mini-btn" title="Show/hide">👁</button>
+          </div>
+          <p class="export-note">
+            Stored only on this machine, in a local file next to the app — never
+            committed, never shown to the model, never sent anywhere but DeepSeek.
+          </p>
+          <div id="settings-inline" class="ai-status" hidden></div>
+        </div>
+
+        <div class="field">
+          <span class="field-label">Author</span>
+          <input id="settings-author-input" type="text" placeholder="Your name"
+                 autocomplete="off" />
+          <p class="export-note">
+            Shown on the front page of exported PDFs and EPUBs.
+          </p>
+        </div>
+
+        <p class="export-note">Model in use: <code id="settings-model"></code></p>
+      </div>
+
+      <div class="modal-foot">
+        <button id="settings-remove" class="btn ghost danger">Remove key</button>
+        <div class="modal-foot-group">
+          <button id="settings-test" class="btn ghost">Test key</button>
+          <button id="settings-save" class="btn primary sheen">Save</button>
+        </div>
       </div>
     </div>
   </div>

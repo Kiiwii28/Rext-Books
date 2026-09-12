@@ -7,6 +7,9 @@ import { mountDock, updateDock } from "./ai-dock.js";
 import { mountExport } from "./export-panel.js";
 import { mountSpark, updateSpark } from "./spark-panel.js";
 import { mountPaneResizer } from "./resize.js";
+import { mountSettings, openIfNoKey } from "./settings-panel.js";
+import { mountTour } from "./tour.js";
+import { mountBookPicker, setBooks as setPickerBooks, setValue as setPickerValue } from "./book-picker.js";
 
 const $ = (id) => document.getElementById(id);
 const LAST_BOOK = "rextbooks:lastBook";
@@ -14,7 +17,6 @@ const LAST_BOOK = "rextbooks:lastBook";
 const els = {
   tree: $("tree"),
   emptyState: $("empty-state"),
-  picker: $("book-picker"),
   newBtn: $("btn-new-book"),
   deleteBtn: $("btn-delete-book"),
   saveState: $("save-state"),
@@ -57,6 +59,10 @@ const exportEls = {
   paletteField: $("palette-field"),
   grid: $("palette-grid"),
   note: $("export-note"),
+  contentTree: $("export-content-tree"),
+  contentHint: $("export-content-hint"),
+  selectAllBtn: $("export-select-all"),
+  selectNoneBtn: $("export-select-none"),
 };
 
 const sparkEls = {
@@ -73,11 +79,28 @@ const sparkEls = {
   stream: $("spark-stream"),
 };
 
+const settingsEls = {
+  openBtn: $("btn-settings"),
+  backdrop: $("settings-modal"),
+  closeBtn: $("settings-close"),
+  status: $("settings-status"),
+  keyInput: $("settings-key-input"),
+  toggleBtn: $("settings-key-toggle"),
+  authorInput: $("settings-author-input"),
+  inline: $("settings-inline"),
+  modelLine: $("settings-model"),
+  testBtn: $("settings-test"),
+  saveBtn: $("settings-save"),
+  removeBtn: $("settings-remove"),
+};
+
 mountTree(els.tree, { onSelect: (id) => store.select(id) });
 mountDock(dockEls);
 mountExport(exportEls);
 mountSpark(sparkEls);
 mountPaneResizer();
+mountSettings(settingsEls);
+mountTour($("btn-tutorial"));
 
 els.tree.addEventListener("click", (e) => {
   if (e.target === els.tree && !store.getPickMode()) store.select(null);
@@ -138,26 +161,19 @@ function paintSaveState(status) {
 
 async function refreshPicker(selectId) {
   const books = await api.listBooks();
-  els.picker.innerHTML = "";
-  for (const b of books) {
-    const opt = document.createElement("option");
-    opt.value = b.id;
-    opt.textContent = b.title || "Untitled";
-    els.picker.append(opt);
-  }
-  els.picker.hidden = books.length === 0;
-  if (selectId) els.picker.value = selectId;
+  setPickerBooks(books);
+  if (selectId) setPickerValue(selectId);
   return books;
 }
 
 async function openBook(id) {
   const book = await api.getBook(id);
   store.setBook(book);
-  els.picker.value = id;
+  setPickerValue(id);
   localStorage.setItem(LAST_BOOK, id);
 }
 
-els.picker.addEventListener("change", () => openBook(els.picker.value));
+mountBookPicker($("book-picker"), { onChange: (id) => openBook(id) });
 
 els.newBtn.addEventListener("click", () => {
   store.setBook(null);
@@ -238,4 +254,5 @@ $("import-file").addEventListener("change", async (e) => {
   const target = books.find((b) => b.id === last) || books[0];
   if (target) await openBook(target.id);
   else { els.emptyState.hidden = false; els.tree.hidden = true; els.startTopic.focus(); }
+  openIfNoKey();   // guides a first-time / freshly-packaged install straight to Settings
 })();
