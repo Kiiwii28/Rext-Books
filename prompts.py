@@ -106,13 +106,23 @@ SYSTEM_PROMPTS = {
 }
 
 
-def _content_system_prompt(*, no_diagrams: bool = False, no_images: bool = False) -> str:
+def _content_system_prompt(*, no_diagrams: bool = False, no_images: bool = False,
+                           use_images: bool = False) -> str:
     """Built per-request (not baked into SYSTEM_PROMPTS) so that an explicit "no
     diagrams" / "no images" ask can drop the matching RULE+DEFAULT pair entirely,
     instead of leaving a DEFAULT that plainly tells the model to add one right
     next to a user instruction telling it not to — a direct contradiction inside
     the same system prompt that a "the user's instructions win" precedence note
-    alone doesn't reliably resolve."""
+    alone doesn't reliably resolve.
+
+    ``use_images`` (the book's "Use images" toggle, off by default) switches the
+    image RULE from "never invent a URL, describe it instead" — the only safe
+    option when the model truly has no way to get a real one — to a fenced
+    ```image-search request block the app resolves server-side via a real
+    Wikimedia/Pexels search after generation finishes (images.py). Ignored
+    entirely when ``no_images`` is set — an explicit "don't use images" always
+    wins over the book-level toggle."""
+    use_images = use_images and not no_images
     rules = [
         "Cover only the subsection named in the request — do not write sibling "
         "subsections or re-teach the parent chapter.",
@@ -128,17 +138,35 @@ def _content_system_prompt(*, no_diagrams: bool = False, no_images: bool = False
         "Every diagram must be a valid Mermaid fenced code block (info string "
         "'mermaid') with plain-text labels."
     )
-    rules.append(
-        "The user does not want any images in this response — do not emit a "
-        "Markdown image link, full stop."
-        if no_images else
-        "Only use a Markdown image link for an image you can point to a real, stable "
-        "URL for (e.g. a specific Wikimedia Commons file). NEVER use a placeholder-"
-        "image service (placehold.co, dummyimage.com, via.placeholder.com, "
-        "picsum.photos and the like) and never invent or guess an image URL. If you "
-        "want to convey a figure you have no real URL for, draw it as a Mermaid "
-        "diagram or describe it in a sentence instead — do not emit an image tag."
-    )
+    if no_images:
+        rules.append(
+            "The user does not want any images in this response — do not emit a "
+            "Markdown image link, full stop."
+        )
+    elif use_images:
+        rules.append(
+            "You have no way to know a real image URL, so NEVER write a Markdown "
+            'image tag ("![...](...)") yourself and never invent or guess a URL. '
+            "When a real photo or illustration would genuinely help, request one "
+            "with a fenced ```image-search block instead — the app searches for "
+            "and inserts a real image server-side after you finish. Format exactly:\n"
+            "```image-search\n"
+            "query: <specific search terms describing what the image should show>\n"
+            "caption: <a short caption describing exactly what it depicts>\n"
+            "```\n"
+            "in place of an image tag, on its own line. If the app can't find a "
+            "match, the request is silently dropped — so this never breaks the "
+            "response either way."
+        )
+    else:
+        rules.append(
+            "Only use a Markdown image link for an image you can point to a real, stable "
+            "URL for (e.g. a specific Wikimedia Commons file). NEVER use a placeholder-"
+            "image service (placehold.co, dummyimage.com, via.placeholder.com, "
+            "picsum.photos and the like) and never invent or guess an image URL. If you "
+            "want to convey a figure you have no real URL for, draw it as a Mermaid "
+            "diagram or describe it in a sentence instead — do not emit an image tag."
+        )
 
     defaults = [
         'Open with a short orienting paragraph and close with a brief "Summary".',
@@ -162,6 +190,18 @@ def _content_system_prompt(*, no_diagrams: bool = False, no_images: bool = False
             "Use images sparingly — about one where it truly adds value. If the user "
             "asks for more images, comply — up to about eight."
         )
+        if use_images:
+            defaults.append(
+                "Keep each image-search query SHORT — 2 to 4 keywords, like typing "
+                'into an image search engine (e.g. "neuron diagram", "mitochondria '
+                'structure", "eiffel tower"), never a full sentence or long '
+                "descriptive phrase — those return far fewer/worse matches. Put all "
+                "the specific detail in the caption instead (e.g. \"Diagram of a "
+                'neuron labelling the dendrites, cell body, and axon") — it doubles '
+                "as the alt text and as the yardstick used to judge which of the "
+                "real search results actually matches; a vague caption like \"a "
+                'neuron" makes that judgment far less reliable too.'
+            )
     defaults.append("Keep it a focused subsection, not an exhaustive treatise.")
 
     return _frame(
@@ -207,7 +247,8 @@ _CONTEXT_PREAMBLE = (
 def build_messages(mode: str, user_prompt: str, *, tone: str | None = None,
                    depth: str | None = None, refine_source: str | None = None,
                    context_blocks: list[str] | None = None,
-                   overarching: str | None = None) -> list[dict]:
+                   overarching: str | None = None,
+                   use_images: bool = False) -> list[dict]:
     if mode not in MODES:
         raise ValueError(f"unknown mode: {mode!r}")
 
@@ -218,6 +259,7 @@ def build_messages(mode: str, user_prompt: str, *, tone: str | None = None,
         system_prompt = _content_system_prompt(
             no_diagrams=bool(_NO_DIAGRAMS_RE.search(combined_hint)),
             no_images=bool(_NO_IMAGES_RE.search(combined_hint)),
+            use_images=use_images,
         )
     else:
         system_prompt = SYSTEM_PROMPTS[mode]

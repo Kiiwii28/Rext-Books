@@ -34,6 +34,10 @@ export function mountDock(refs) {
   buildChips(els.tones, TONES, "tone");
   buildChips(els.depths, DEPTHS, "depth");
 
+  els.useImages.addEventListener("change", () => {
+    store.setSetting("useImages", els.useImages.checked);
+  });
+
   els.refineRow.querySelectorAll(".seg-btn").forEach((b) => {
     b.addEventListener("click", () => {
       refineMode = b.dataset.refine;
@@ -174,6 +178,9 @@ export function updateDock(state) {
   syncChips(els.depths, store.getSetting("depth"));
   els.refineRow.hidden = !(mode === "content" && sectionHasContent());
 
+  els.imagesRow.hidden = mode !== "content";
+  els.useImages.checked = !!store.getSetting("useImages");
+
   els.subModeRow.hidden = !onSubheading;
   els.subModeRow.querySelectorAll(".seg-btn")
     .forEach((x) => x.classList.toggle("active", x.dataset.sub === subMode));
@@ -237,6 +244,7 @@ function applyBulkView(state) {
   els.subModeRow.querySelectorAll(".seg-btn")
     .forEach((x) => x.classList.toggle("active", x.dataset.sub === subMode));
   els.refineRow.hidden = true;
+  els.imagesRow.hidden = bmode !== "content";
   els.countRow.hidden = bmode !== "subheadings";
   if (bmode === "subheadings") els.countRow.querySelector("span").textContent = "Subheadings per block";
 
@@ -388,6 +396,7 @@ async function run() {
     depth: store.getSetting("depth"),
     refine,
     contextIds,
+    useImages: current.mode === "content" && store.getSetting("useImages"),
   };
 
   els.stream.hidden = current.mode === "content";
@@ -412,6 +421,13 @@ async function run() {
         els.stream.textContent = full;
         els.stream.scrollTop = els.stream.scrollHeight;
       }
+    },
+    onStatus: (msg) => setStatus(msg, "busy"),
+    onRevise: (full) => {
+      // The server just resolved ```image-search placeholders into real
+      // images (or dropped ones with no match) — an unthrottled render so
+      // this final correction can never be swallowed by throttledRenderSection.
+      if (current.mode === "content" && sectionId) renderSection(sectionId, full);
     },
     onDone: (full) => {
       if (current.mode === "content") {
@@ -463,6 +479,10 @@ function streamOnce(payload, mode, targetId) {
           els.stream.textContent = full;
           els.stream.scrollTop = els.stream.scrollHeight;
         }
+      },
+      onStatus: (msg) => setStatus(msg, "busy"),
+      onRevise: (full) => {
+        if (mode === "content" && sectionId) renderSection(sectionId, full);
       },
       onDone: (full) => {
         if (mode === "content") {
@@ -530,7 +550,8 @@ async function runBulk() {
     try {
       const full = await streamOnce(
         { mode, bookId: book.id, nodeId: targetId, count, prompt,
-          tone, depth, refine: false, contextIds },
+          tone, depth, refine: false, contextIds,
+          useImages: mode === "content" && store.getSetting("useImages") },
         mode, targetId,
       );
       if (full && full.trim()) done += 1;

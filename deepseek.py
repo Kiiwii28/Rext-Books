@@ -25,8 +25,20 @@ def _endpoint() -> str:
     return f"{config.DEEPSEEK_BASE_URL}/chat/completions"
 
 
-def stream_chat(messages: list[dict], *, temperature: float = 0.7) -> Iterator[str]:
+def stream_chat(messages: list[dict], *, temperature: float = 0.7,
+                max_tokens: int | None = None,
+                reasoning_effort: str | None = None) -> Iterator[str]:
     """Yield text deltas from DeepSeek as they arrive.
+
+    ``reasoning_effort="none"`` skips this model's hidden reasoning pass
+    entirely — worth knowing about: the model spends an unpredictable (and
+    sometimes very large — 500+ tokens observed) number of hidden
+    "reasoning_content" tokens before any visible output, even for a trivial
+    one-word answer, and those count against ``max_tokens`` together with the
+    real output. For a short, simple classification prompt this reliably
+    produces the same answer using a single visible token instead, sidestepping
+    the whole "was max_tokens big enough" question rather than just raising
+    the cap and hoping.
 
     Raises ``requests.HTTPError`` on a non-2xx response (with the body attached
     to the exception message where possible).
@@ -37,6 +49,10 @@ def stream_chat(messages: list[dict], *, temperature: float = 0.7) -> Iterator[s
         "temperature": temperature,
         "stream": True,
     }
+    if max_tokens is not None:
+        payload["max_tokens"] = max_tokens
+    if reasoning_effort is not None:
+        payload["reasoning_effort"] = reasoning_effort
     with requests.post(
         _endpoint(),
         headers=_headers(),
@@ -67,9 +83,13 @@ def stream_chat(messages: list[dict], *, temperature: float = 0.7) -> Iterator[s
                 yield piece
 
 
-def chat(messages: list[dict], *, temperature: float = 0.7) -> str:
-    """Non-streaming convenience wrapper."""
-    return "".join(stream_chat(messages, temperature=temperature))
+def chat(messages: list[dict], *, temperature: float = 0.7,
+         max_tokens: int | None = None, reasoning_effort: str | None = None) -> str:
+    """Non-streaming convenience wrapper (still uses the streaming endpoint
+    under the hood — just joins the pieces — since that's the one path
+    already proven to work reliably against DeepSeek's API here)."""
+    return "".join(stream_chat(messages, temperature=temperature, max_tokens=max_tokens,
+                               reasoning_effort=reasoning_effort))
 
 
 def test_key(key: str) -> tuple[bool, str]:

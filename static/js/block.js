@@ -2,7 +2,7 @@
 // plus the in-place Markdown editor + image uploader for section blocks.
 
 import * as store from "./store.js";
-import { renderMarkdown, uploadImage } from "./api.js";
+import { renderMarkdown, uploadImage, searchImages } from "./api.js";
 import { setEditLock } from "./tree.js";
 import { renderMermaidIn } from "./mermaid-render.js";
 import { applyMarkdownAction } from "./md-toolbar.js";
@@ -284,6 +284,7 @@ export function createBlock(node, { selectedId, onChange, context }) {
 
     let fullscreen = false;
     let backdrop = null;
+    let swapModal = null;   // built lazily on first double-click, reused after that
 
     let t;
     const refreshPreview = () => {
@@ -295,6 +296,82 @@ export function createBlock(node, { selectedId, onChange, context }) {
       if (manualHeight == null) autosize(ta);
       refreshPreview();
     });
+
+    // ---- double-click an inserted image to swap it for a different one ----
+    preview.addEventListener("dblclick", (e) => {
+      const img = e.target.closest("img");
+      if (!img) return;
+      const idx = [...preview.querySelectorAll("img")].indexOf(img);
+      if (idx !== -1) openImageSwap(idx);
+    });
+
+    function openImageSwap(idx) {
+      // The preview is rendered from this same Markdown in document order, so
+      // the Nth <img> in the DOM corresponds to the Nth ![...](...) match here.
+      const matches = [...ta.value.matchAll(/!\[([^\]]*)\]\(([^)]+)\)/g)];
+      const match = matches[idx];
+      if (!match) return;
+      const start = match.index;
+      const end = start + match[0].length;
+      // A following "\n*attribution*" caption line (this app's own insert
+      // format) gets replaced along with the image, not left orphaned.
+      const capMatch = ta.value.slice(end).match(/^\n\*[^\n]*\*/);
+      const replaceEnd = end + (capMatch ? capMatch[0].length : 0);
+      const currentAlt = match[1];
+
+      if (!swapModal) swapModal = buildSwapModal();
+      swapModal.open(currentAlt, async (it) => {
+        const res = await uploadImage(store.getBook()?.id, { url: it.fullUrl });
+        const alt = (it.title || "").replace(/[[\]]/g, "");
+        const replacement = `![${alt}](${res.url})\n*${it.attribution}*`;
+        ta.setRangeText(replacement, start, replaceEnd, "end");
+        ta.dispatchEvent(new Event("input"));
+      });
+    }
+
+    function buildSwapModal() {
+      const backdropEl = document.createElement("div");
+      backdropEl.className = "modal-backdrop ip-swap-backdrop";
+      backdropEl.innerHTML = `
+        <div class="modal modal-wide glass" role="dialog" aria-modal="true" aria-label="Replace image">
+          <div class="modal-head">
+            <h2>Replace image</h2>
+            <button type="button" class="mini-btn ip-swap-close" aria-label="Close">✕</button>
+          </div>
+          <div class="modal-body">
+            <div class="ip-swap-search"></div>
+          </div>
+        </div>`;
+      document.body.append(backdropEl);
+
+      let onPickCallback = null;
+      const search = mountImageSearch(backdropEl.querySelector(".ip-swap-search"), {
+        onPick: async (it, card, setSearchStatus) => {
+          card.disabled = true;
+          setSearchStatus("Replacing…", "busy");
+          try {
+            await onPickCallback?.(it);
+            closeModal();
+          } catch (err) {
+            setSearchStatus(String(err.message || err), "err");
+            card.disabled = false;
+          }
+        },
+      });
+
+      function closeModal() { backdropEl.hidden = true; }
+      backdropEl.querySelector(".ip-swap-close").addEventListener("click", closeModal);
+      backdropEl.addEventListener("click", (e) => { if (e.target === backdropEl) closeModal(); });
+
+      return {
+        el: backdropEl,
+        open(startingQuery, onPick) {
+          onPickCallback = onPick;
+          search.setQuery(startingQuery || "");
+          backdropEl.hidden = false;
+        },
+      };
+    }
 
     ta.addEventListener("paste", (e) => {
       const file = [...(e.clipboardData?.items || [])]
@@ -400,6 +477,7 @@ export function createBlock(node, { selectedId, onChange, context }) {
 
     function close(value) {
       backdrop?.remove();
+      swapModal?.el.remove();   // it's parked in <body>, not inside `ed`
       ed.remove();   // detach whether it's still in the tree or parked in <body> (fullscreen)
       delete wrap.dataset.editing;
       if (value !== null && value !== node.content) store.setContent(node.id, value);
@@ -438,6 +516,7 @@ function buildImagePanel(panel, ta) {
       <button class="ip-tab active" data-tab="paste">Paste / Drop</button>
       <button class="ip-tab" data-tab="upload">Upload file</button>
       <button class="ip-tab" data-tab="link">From link</button>
+      <button class="ip-tab" data-tab="search">Search</button>
     </div>
     <div class="ip-panes">
       <div data-pane="paste"><div class="ip-drop" tabindex="0">Click here, then paste an image — or drag &amp; drop a file</div></div>
@@ -448,6 +527,7 @@ function buildImagePanel(panel, ta) {
           <button class="btn primary sm ip-add">Add</button>
         </div>
       </div>
+      <div data-pane="search" hidden></div>
     </div>
     <div class="ip-status" hidden></div>`;
 
@@ -481,6 +561,111 @@ function buildImagePanel(panel, ta) {
     const url = panel.querySelector(".ip-url").value.trim();
     if (url) uploadAndInsert({ url }, ta, setS);
   });
+
+  // ---- image search: shared UI (also used by the double-click swap modal) --
+  mountImageSearch(panel.querySelector('[data-pane="search"]'), {
+    onPick: async (it, card, setSearchStatus) => {
+      card.disabled = true;
+      setSearchStatus("Adding…", "busy");
+      try {
+        const res = await uploadImage(store.getBook()?.id, { url: it.fullUrl });
+        const alt = (it.title || "").replace(/[[\]]/g, "");
+        // Attribution travels with the image as a caption line — required for
+        // most Wikimedia Commons licences, and good practice for Pexels too.
+        insertAtCaret(ta, `![${alt}](${res.url})\n*${it.attribution}*`);
+        setSearchStatus("Image inserted ✓", "ok");
+      } catch (err) {
+        setSearchStatus(String(err.message || err), "err");
+        card.disabled = false;
+      }
+    },
+  });
+}
+
+/** Mounts the Wikimedia/Pexels search UI (source toggle, query box, result
+ *  grid, status line) into `container`. `onPick(item, card, setStatus)` is
+ *  called when a result is clicked — the caller decides what "picking"
+ *  means (insert at the caret vs. replace an existing image), and gets the
+ *  clicked card (to disable it) and this UI's own status-line setter to
+ *  report progress/errors through the same line search errors use. Returns
+ *  `{ setQuery(q) }` so a caller (the swap modal) can seed a starting query. */
+function mountImageSearch(container, { onPick }) {
+  container.innerHTML = `
+    <div class="segmented ip-search-source" role="tablist">
+      <button class="seg-btn active" data-source="wikimedia" role="tab" type="button">Wikimedia</button>
+      <button class="seg-btn" data-source="pexels" role="tab" type="button">Pexels</button>
+    </div>
+    <div class="ip-link-row">
+      <input type="text" class="ip-search-q" placeholder="e.g. neuron diagram, mitochondria, city skyline">
+      <button class="btn primary sm ip-search-go">Search</button>
+    </div>
+    <div class="ip-search-results"></div>
+    <div class="ip-status" hidden></div>`;
+
+  const status = container.querySelector(".ip-status");
+  const setS = (m, k = "") => { status.hidden = !m; status.textContent = m || ""; status.className = `ip-status ${k}`; };
+  const searchInput = container.querySelector(".ip-search-q");
+  const searchGoBtn = container.querySelector(".ip-search-go");
+  const results = container.querySelector(".ip-search-results");
+  const sourceBtns = container.querySelectorAll(".ip-search-source .seg-btn");
+  let searchSource = "wikimedia";
+
+  sourceBtns.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (btn.dataset.source === searchSource) return;
+      searchSource = btn.dataset.source;
+      sourceBtns.forEach((b) => b.classList.toggle("active", b === btn));
+      results.innerHTML = "";
+      setS("");
+      if (searchInput.value.trim()) runSearch();
+    });
+  });
+
+  async function runSearch() {
+    const q = searchInput.value.trim();
+    if (!q) return;
+    results.innerHTML = "";
+    searchGoBtn.disabled = true;
+    setS("Searching…", "busy");
+    try {
+      const { results: items, pexelsConfigured } = await searchImages(q, 12, searchSource);
+      renderResults(items);
+      setS(
+        items.length ? "" :
+        searchSource === "pexels" && !pexelsConfigured ? "No Pexels API key configured yet — add one in ⚙ Settings." :
+        searchSource === "pexels" ? "No results — try different words." :
+          "No results — try different words, or switch to Pexels above.",
+        items.length ? "" : "err",
+      );
+    } catch (err) {
+      setS(String(err.message || err), "err");
+    } finally {
+      searchGoBtn.disabled = false;
+    }
+  }
+  searchGoBtn.addEventListener("click", runSearch);
+  searchInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); runSearch(); }
+  });
+
+  function renderResults(items) {
+    results.innerHTML = "";
+    for (const it of items) {
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = "ip-result";
+      card.title = it.attribution || it.title || "";
+      card.innerHTML =
+        `<img src="${it.thumbUrl}" alt="" loading="lazy">` +
+        `<span class="ip-result-src ip-result-src-${it.source}">${it.source === "wikimedia" ? "Wikimedia" : "Pexels"}</span>`;
+      card.addEventListener("click", () => onPick(it, card, setS));
+      results.append(card);
+    }
+  }
+
+  return {
+    setQuery(q) { searchInput.value = q || ""; },
+  };
 }
 
 function insertAtCaret(ta, text) {

@@ -61,6 +61,11 @@ export function importBook(file) {
   return fetch("/api/books/import", { method: "POST", body: fd }).then(j);
 }
 
+/** Search for images matching a caption/keyword. `source` is "wikimedia",
+ *  "pexels", or "auto" (Wikimedia first, Pexels as a fallback if it comes up short). */
+export const searchImages = (query, limit = 12, source = "wikimedia") =>
+  fetch(`/api/image-search?q=${encodeURIComponent(query)}&limit=${limit}&source=${source}`).then(j);
+
 /** Upload a section image. `payload` is one of {file}, {dataUrl}, {url}. */
 export function uploadImage(bookId, payload) {
   const opts = { method: "POST" };
@@ -95,9 +100,16 @@ export const printHref = (bookId, palette, excludeIds) =>
 
 /**
  * Stream a generation. Returns a controller with `.abort()`.
- * Callbacks: onStart(mode), onDelta(text), onDone(fullText), onError(message).
+ * Callbacks: onStart(mode), onDelta(text), onDone(fullText), onError(message),
+ * onStatus(message) (an in-progress note, e.g. "Finding images…"), and
+ * onRevise(fullText) — the server replacing the accumulated text wholesale
+ * (image-search placeholders resolved into real Markdown, or dropped) after
+ * the raw stream finishes but before "done". Kept separate from onDelta
+ * rather than folded into it: onDelta is throttled by callers for the
+ * partial-streamed-text case, and this final correction must never be the
+ * thing that gets silently dropped by that throttle.
  */
-export function streamGenerate(payload, { url = "/api/ai/generate", onStart, onDelta, onDone, onError } = {}) {
+export function streamGenerate(payload, { url = "/api/ai/generate", onStart, onDelta, onDone, onError, onStatus, onRevise } = {}) {
   const ctrl = new AbortController();
   let full = "";
 
@@ -157,6 +169,8 @@ export function streamGenerate(payload, { url = "/api/ai/generate", onStart, onD
 
       if (event === "start") onStart?.(data.mode);
       else if (event === "delta") { full += data.text || ""; onDelta?.(data.text || "", full); }
+      else if (event === "status") onStatus?.(data.message || "");
+      else if (event === "revise") { full = data.text ?? full; onRevise?.(full); }
       else if (event === "done") onDone?.(full);
       else if (event === "error") onError?.(data.message || "generation failed");
     }

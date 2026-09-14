@@ -134,6 +134,11 @@
           </div>
         </div>
 
+        <label class="ai-count-row" id="ai-images-row" hidden>
+          <span>🖼 Let DeepSeek search &amp; insert images <span class="hint">(via Wikimedia/Pexels)</span></span>
+          <input id="ai-use-images" type="checkbox">
+        </label>
+
         <div class="ai-bulk-queue" id="ai-bulk-queue" hidden>
           <span class="ai-tag-label">Bulk queue <span class="hint">— generated one at a time</span></span>
           <div id="ai-bulk-chips" class="ai-context-chips"></div>
@@ -280,6 +285,21 @@
                  autocomplete="off" />
           <p class="export-note">
             Shown on the front page of exported PDFs and EPUBs.
+          </p>
+        </div>
+
+        <div class="field">
+          <span class="field-label">Pexels API key <span class="hint">(optional)</span></span>
+          <div class="settings-key-row">
+            <input id="settings-pexels-input" type="password" placeholder="Paste a Pexels API key…"
+                   autocomplete="off" spellcheck="false" />
+            <button id="settings-pexels-toggle" type="button" class="mini-btn" title="Show/hide">👁</button>
+          </div>
+          <p class="export-note">
+            Powers the <b>Search</b> tab's stock-photo results when picking an image for a
+            section (free at <b>pexels.com/api</b>). Wikimedia Commons search always works
+            with no key at all — this only adds a second source for general photography.
+            <button type="button" id="settings-pexels-clear" class="mini-link">Clear</button>
           </p>
         </div>
 

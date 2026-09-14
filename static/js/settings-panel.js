@@ -21,6 +21,22 @@ export async function mountSettings(refs) {
     els.toggleBtn.textContent = showing ? "👁" : "🙈";
   });
 
+  els.pexelsToggle.addEventListener("click", () => {
+    const showing = els.pexelsInput.type === "text";
+    els.pexelsInput.type = showing ? "password" : "text";
+    els.pexelsToggle.textContent = showing ? "👁" : "🙈";
+  });
+  els.pexelsClear.addEventListener("click", async () => {
+    els.pexelsInput.value = "";
+    try {
+      await saveSettings({ pexelsApiKey: "" });
+      setInline("Pexels key removed.", "ok");
+      await refreshBadge();
+    } catch (err) {
+      setInline(String(err.message || err), "err");
+    }
+  });
+
   els.testBtn.addEventListener("click", onTest);
   els.saveBtn.addEventListener("click", onSave);
   els.removeBtn.addEventListener("click", onRemove);
@@ -30,7 +46,8 @@ export async function mountSettings(refs) {
 
 async function refreshBadge() {
   let s;
-  try { s = await getSettings(); } catch { s = { hasApiKey: false, keySource: "none", model: "", author: "" }; }
+  try { s = await getSettings(); }
+  catch { s = { hasApiKey: false, keySource: "none", model: "", author: "", hasPexelsKey: false }; }
   els.openBtn.classList.toggle("needs-key", !s.hasApiKey);
   els.openBtn.title = s.hasApiKey ? "Settings" : "Settings — no API key set yet";
   return s;
@@ -53,6 +70,10 @@ async function open(prefetched) {
   els.keyInput.type = "password";
   els.toggleBtn.textContent = "👁";
   els.authorInput.value = s.author || "";
+  els.pexelsInput.value = "";
+  els.pexelsInput.type = "password";
+  els.pexelsToggle.textContent = "👁";
+  els.pexelsInput.placeholder = s.hasPexelsKey ? "•••••••••••••• (saved — leave blank to keep)" : "Paste a Pexels API key…";
   setInline("");
   els.backdrop.hidden = false;
   els.keyInput.focus();
@@ -95,12 +116,15 @@ async function onTest() {
 async function onSave() {
   const key = els.keyInput.value.trim();
   const author = els.authorInput.value.trim();
+  const pexelsKey = els.pexelsInput.value.trim();
   els.saveBtn.disabled = true;
   try {
-    const payload = { author };       // author is never secret — always round-tripped
-    if (key) payload.apiKey = key;    // key input left blank means "leave the key alone"
+    const payload = { author };            // author is never secret — always round-tripped
+    if (key) payload.apiKey = key;         // key input left blank means "leave the key alone"
+    if (pexelsKey) payload.pexelsApiKey = pexelsKey;
     await saveSettings(payload);
     els.keyInput.value = "";
+    els.pexelsInput.value = "";
     setInline("Saved ✓", "ok");
     paintStatus(await refreshBadge());
   } catch (err) {

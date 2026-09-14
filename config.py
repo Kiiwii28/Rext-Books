@@ -133,3 +133,32 @@ def set_author(name: str) -> None:
         else:
             data.pop("author", None)
         _write_settings(data)
+
+
+# --------------------------------------------------------------------------- #
+#  Pexels API key (optional — powers the image-search tab's stock-photo       #
+#  fallback; Wikimedia Commons search works with no key at all)               #
+# --------------------------------------------------------------------------- #
+#
+# STUB: get a free key at https://www.pexels.com/api/ and paste it into
+# ⚙ Settings, or set PEXELS_API_KEY in a local .env file. Same precedence and
+# storage as the DeepSeek key above (Settings-UI value wins over .env/env).
+
+_ENV_PEXELS_KEY = os.getenv("PEXELS_API_KEY", "").strip()
+
+
+def get_pexels_key() -> str:
+    with _lock:
+        ui_key = (_read_settings().get("pexelsApiKey") or "").strip()
+    return ui_key or _ENV_PEXELS_KEY
+
+
+def set_pexels_key(key: str) -> None:
+    with _lock:
+        data = _read_settings()
+        key = (key or "").strip()
+        if key:
+            data["pexelsApiKey"] = key
+        else:
+            data.pop("pexelsApiKey", None)
+        _write_settings(data)

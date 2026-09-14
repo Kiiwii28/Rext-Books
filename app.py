@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 
 import requests
 from flask import (
@@ -62,22 +63,26 @@ def api_get_settings():
         "keySource": config.api_key_source(),   # "settings" | "env" | "none"
         "model": config.DEEPSEEK_MODEL,
         "author": config.get_author(),
+        "hasPexelsKey": bool(config.get_pexels_key()),
     })
 
 
 @app.post("/api/settings")
 def api_save_settings():
     data = request.get_json(silent=True) or {}
-    if "apiKey" not in data and "author" not in data:
-        return jsonify({"error": "apiKey or author is required"}), 400
+    if not {"apiKey", "author", "pexelsApiKey"} & data.keys():
+        return jsonify({"error": "apiKey, author or pexelsApiKey is required"}), 400
     if "apiKey" in data:
         config.set_api_key(data.get("apiKey") or "")
     if "author" in data:
         config.set_author(data.get("author") or "")
+    if "pexelsApiKey" in data:
+        config.set_pexels_key(data.get("pexelsApiKey") or "")
     return jsonify({
         "hasApiKey": bool(config.get_api_key()),
         "keySource": config.api_key_source(),
         "author": config.get_author(),
+        "hasPexelsKey": bool(config.get_pexels_key()),
     })
 
 
@@ -185,6 +190,22 @@ def api_restore_version(book_id: str):
 # --------------------------------------------------------------------------- #
 #  Images                                                                      #
 # --------------------------------------------------------------------------- #
+
+@app.get("/api/image-search")
+def api_image_search():
+    query = (request.args.get("q") or "").strip()
+    if not query:
+        return jsonify({"results": [], "pexelsConfigured": bool(config.get_pexels_key())})
+    try:
+        limit = int(request.args.get("limit", 12))
+    except ValueError:
+        limit = 12
+    limit = min(max(limit, 1), 24)
+    source = request.args.get("source") or "auto"
+    if source not in ("auto", "wikimedia", "pexels"):
+        source = "auto"
+    return jsonify(images.search_images(query, limit=limit, source=source))
+
 
 @app.post("/api/books/<book_id>/images")
 def api_upload_image(book_id: str):
@@ -354,14 +375,44 @@ def _collect_context(book: dict, ids: list, *, exclude_ids: set | None = None) -
     return [text] if text else []
 
 
-def _stream_chat_response(messages: list[dict], start_payload: dict) -> Response:
-    """Shared SSE wrapper for /api/ai/generate and /api/ai/spark."""
+def _stream_chat_response(messages: list[dict], start_payload: dict,
+                          *, resolve_images_book_id: str | None = None) -> Response:
+    """Shared SSE wrapper for /api/ai/generate and /api/ai/spark.
+
+    When ``resolve_images_book_id`` is set (content mode with the "Use
+    images" toggle on), any ```image-search request blocks in the raw model
+    output are resolved — searched, judged, downloaded, saved — after the
+    text stream finishes, and the corrected full text is sent as one extra
+    "revise" event before "done". The client replaces its accumulated buffer
+    with that text rather than trying to patch deltas in place, since the
+    resolution can both remove placeholders entirely (nothing found) and
+    change their length (a placeholder block vs. the inserted Markdown)."""
     @stream_with_context
     def generate():
         yield _sse("start", start_payload)
+        full_parts: list[str] = []
         try:
             for piece in deepseek.stream_chat(messages):
+                full_parts.append(piece)
                 yield _sse("delta", {"text": piece})
+            if resolve_images_book_id:
+                full = "".join(full_parts)
+                if images._PLACEHOLDER_RE.search(full):
+                    yield _sse("status", {"message": "Finding images…"})
+                    try:
+                        revised, resolved, total = images.resolve_image_placeholders(
+                            full, resolve_images_book_id)
+                    except Exception as exc:
+                        import traceback
+                        print(f"[app] resolve_image_placeholders crashed: {exc!r}", file=sys.stderr, flush=True)
+                        traceback.print_exc(file=sys.stderr)
+                        revised, resolved, total = full, 0, 0
+                    print(f"[app] image resolution: {resolved} of {total} placeholder(s) resolved",
+                          file=sys.stderr, flush=True)
+                    if revised != full:
+                        yield _sse("revise", {"text": revised})
+                    if total:
+                        yield _sse("status", {"message": f"Found {resolved} of {total} image(s)."})
             yield _sse("done", {})
         except requests.HTTPError as exc:
             yield _sse("error", {"message": str(exc)})
@@ -385,6 +436,7 @@ def api_generate():
     depth = body.get("depth")
     refine = bool(body.get("refine"))
     context_ids = body.get("contextIds") or []
+    use_images = bool(body.get("useImages"))
 
     if mode not in prompts.MODES:
         return jsonify({"error": f"mode must be one of {prompts.MODES}"}), 400
@@ -431,11 +483,11 @@ def api_generate():
 
     messages = prompts.build_messages(
         mode, user_prompt, tone=tone, depth=depth, refine_source=refine_source,
-        context_blocks=context_blocks, overarching=overarching,
+        context_blocks=context_blocks, overarching=overarching, use_images=use_images,
     )
     return _stream_chat_response(messages, {
         "mode": mode, "refine": refine_source is not None, "context": len(context_blocks),
-    })
+    }, resolve_images_book_id=(book_id if mode == "content" and use_images else None))
 
 
 @app.post("/api/ai/spark")
