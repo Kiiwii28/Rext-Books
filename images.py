@@ -199,9 +199,12 @@ def search_pexels(query: str, limit: int = 12) -> list[dict]:
 
 def search_images(query: str, limit: int = 12, source: str = "auto") -> dict:
     """`source` picks a single explicit provider ("wikimedia" or "pexels"),
-    or "auto" (default) for the original Wikimedia-first, Pexels-as-fallback
+    "none" to skip searching entirely (both sources unticked), or "auto"
+    (default) for the original Wikimedia-first, Pexels-as-fallback
     behaviour — kept for callers that don't care which source answered."""
-    if source == "pexels":
+    if source == "none":
+        results = []
+    elif source == "pexels":
         results = search_pexels(query, limit=limit)
     elif source == "wikimedia":
         results = search_wikimedia(query, limit=limit)
@@ -260,17 +263,30 @@ def _parse_placeholder(body: str) -> tuple[str, str]:
 def _choose_candidate(caption: str, candidates: list[dict]) -> int | None:
     """A small, cheap, non-streaming DeepSeek call picks the best-matching
     candidate by its title/attribution text (no vision model involved — this
-    app never sees the actual pixels either). Returns None if nothing
-    plausibly matches.
+    app never sees the actual pixels either). Returns None if nothing has a
+    genuine conceptual connection; fails closed (returns None) on any error
+    or an unparseable reply too, rather than guessing the top result.
 
-    This check is load-bearing, not a nicety: stock-photo search (Pexels)
-    doesn't reliably return zero results for a query with no real match — it
-    falls back to generic/trending photos instead (a nonsense query like
-    "zzqqxx probably no results" still comes back with six unrelated stock
-    photos). Without a genuinely skeptical judge here, a bad query silently
-    inserts a random, unrelated stock photo instead of no image at all — so
-    any failure in this function itself also fails closed (returns None,
-    dropping the image) rather than guessing the top result."""
+    Deliberately loose, not literal: these images are for visual enrichment,
+    not a bespoke illustration commission, so a real image capturing the
+    same general concept or a fitting visual metaphor counts as a match even
+    when its specific composition differs (a bar chart for a caption that
+    said "pie chart", a completed jigsaw for "puzzle pieces"). The bar that
+    still matters is domain/subject, not literal accuracy — a candidate
+    about a genuinely different topic, or stock-photo filler with no real
+    connection at all (confetti, an unrelated office photo, trending
+    abstract art returned for a nonsense query — Pexels does this instead of
+    returning zero results), still gets rejected. Without that floor, a bad
+    query would silently insert a random, unrelated stock photo instead of
+    no image at all.
+
+    Retrying THIS call on the same candidates isn't done here — a query that
+    returned the wrong domain entirely (e.g. "portfolio diversification"
+    pulling back agricultural-diversification photos) will fail again no
+    matter how many times the same list gets re-judged. See
+    ``_suggest_alternative_query`` / ``resolve_image_placeholders`` for the
+    retry that actually helps: a different search, not a second opinion on
+    the same one."""
     if not candidates:
         return None
     listing = "\n".join(
@@ -279,16 +295,31 @@ def _choose_candidate(caption: str, candidates: list[dict]) -> int | None:
     )
     messages = [
         {"role": "system", "content": (
-            "You are a strict, skeptical judge picking an image for a textbook "
-            "caption, from a list of real image-search results — titles and "
-            "attributions only, you cannot see the actual pixels. IMPORTANT: stock-"
-            "photo search often returns generic or trending filler with no real "
-            "connection to the query when nothing good actually matches (e.g. "
-            "confetti, stock office photos, unrelated abstract art) — do not pick "
-            "one of these just because it's in the list. Only pick a candidate "
-            "whose title plausibly, specifically depicts what the caption "
-            'describes. Reply with ONLY the number of that candidate, or the word '
-            '"none" if nothing genuinely matches. No other text, no punctuation.'
+            "You are picking an image for VISUAL ENRICHMENT of a textbook "
+            "section — the goal is a good conceptual or thematic fit, not a "
+            "literal, exact depiction. From a list of real image-search results "
+            "(titles and attributions only, you cannot see the actual pixels): "
+            "accept a candidate whenever its subject shares the same general "
+            "concept, topic, or a fitting visual metaphor with the caption — "
+            "even if the specific composition, chart type, or exact scenario "
+            'differs. For example, a generic finance/allocation chart is a good '
+            'match for "a pie chart of portfolio diversification", and a '
+            'completed jigsaw puzzle is a good match for "puzzle pieces '
+            'representing strategy" — same idea, different picture, still the '
+            "SAME real-world subject/field. That last part is the actual bar: "
+            "the candidate must be from the same subject/field as the caption, "
+            "not just share a word with it. A photo of crop diversification on "
+            "a farm is NOT a match for \"financial portfolio diversification\" "
+            "— it's a different field (agriculture vs. finance) that happens to "
+            "share the word \"diversification\", not a visual stand-in for the "
+            "same idea. Reject a candidate that's from a genuinely different "
+            "subject/field, or is generic filler with no real connection to the "
+            "topic at all — stock-photo search sometimes returns trending/"
+            "generic results (confetti, unrelated office photos, abstract art) "
+            "with no connection whatsoever; those don't count just because "
+            'they\'re in the list. Reply with ONLY the number of the best '
+            'match, or "none" if nothing is genuinely from the same subject/'
+            "field. No other text, no punctuation."
         )},
         {"role": "user", "content": f'Caption: "{caption}"\n\nCandidates:\n{listing}'},
     ]
@@ -305,8 +336,8 @@ def _choose_candidate(caption: str, candidates: list[dict]) -> int | None:
         reply = deepseek.chat(messages, temperature=0, max_tokens=50,
                               reasoning_effort="none").strip().lower()
     except Exception as exc:
-        _log(f"chooser call failed for {caption!r}: {exc!r} — dropping image")
-        return None   # chooser failed — fail closed: no image beats a wrong one
+        _log(f"chooser call failed for {caption!r}: {exc!r}")
+        return None
     if "none" in reply:
         _log(f"chooser said none for {caption!r} among {len(candidates)} candidate(s) — reply={reply!r}")
         return None
@@ -315,13 +346,57 @@ def _choose_candidate(caption: str, candidates: list[dict]) -> int | None:
         idx = int(m.group())
         if 0 <= idx < len(candidates):
             return idx
-    _log(f"chooser reply unparseable for {caption!r}: {reply!r} — dropping image")
+    _log(f"chooser reply unparseable for {caption!r}: {reply!r}")
     return None
 
 
-def resolve_image_placeholders(text: str, book_id: str) -> tuple[str, int, int]:
+def _suggest_alternative_query(query: str, caption: str, rejected_titles: list[str]) -> str | None:
+    """When the judge rejects every candidate, ask for a genuinely different
+    short search query rather than re-asking about the same results — e.g.
+    "portfolio diversification" pulled back agricultural-diversification
+    photos (Wikimedia's index for "diversification" skews agricultural); a
+    completely different query like "financial portfolio" has an actual
+    chance of escaping that wrong domain, whereas re-judging the identical
+    candidate list again never would. Shown the rejected titles so it can
+    see what went wrong and steer away from it. Returns None (no retry
+    search) on failure or if it can't come up with something meaningfully
+    different."""
+    rejected = "; ".join(rejected_titles[:6]) if rejected_titles else "no results at all"
+    messages = [
+        {"role": "system", "content": (
+            "You refine image-search queries for VISUAL ENRICHMENT — the goal is "
+            "a fitting, thematically-resonant image, not a literal depiction. A "
+            "short search query returned results with no real conceptual "
+            "connection to the topic. Suggest ONE different short query — 2-3 "
+            "words — more likely to land in the right general idea-space: a "
+            "broader or simpler term, a related concept, or a fitting visual "
+            "metaphor are all fine, it doesn't need to be more specific or more "
+            "literal than the original. Reply with ONLY the new query text: no "
+            "quotes, no explanation."
+        )},
+        {"role": "user", "content": (
+            f'Original query: "{query}"\n'
+            f'The general idea/theme behind it: "{caption}"\n'
+            f"That query's results had no real connection to this, e.g.: {rejected}\n"
+            "Suggest a better query."
+        )},
+    ]
+    try:
+        reply = deepseek.chat(messages, temperature=0.4, max_tokens=50,
+                              reasoning_effort="none").strip()
+    except Exception as exc:
+        _log(f"alternative-query suggestion failed for {query!r}: {exc!r}")
+        return None
+    reply = reply.strip("\"'").strip()
+    if not reply or reply.lower() == query.lower():
+        return None
+    return reply
+
+
+def resolve_image_placeholders(text: str, book_id: str, *, source: str = "auto") -> tuple[str, int, int]:
     """Replace every ```image-search request block with a real, locally-saved
-    image — searched via Wikimedia/Pexels, picked by ``_choose_candidate``
+    image — searched via Wikimedia/Pexels (or whichever ``source`` the two
+    tickboxes resolved to — see app.py), picked by ``_choose_candidate``
     among the actual results — or drop it silently if nothing usable turns up.
     Never raises: a failure resolving any one placeholder just drops that one,
     so a flaky search/download/chooser call can't break the whole response.
@@ -343,10 +418,22 @@ def resolve_image_placeholders(text: str, book_id: str) -> tuple[str, int, int]:
                 _log(f"placeholder with no parseable query, raw body={m.group(1)!r} — dropping")
             else:
                 try:
-                    candidates = search_images(query, limit=6, source="auto")["results"]
+                    candidates = search_images(query, limit=6, source=source)["results"]
                     if not candidates:
                         _log(f"zero search results for query={query!r}")
                     idx = _choose_candidate(caption or query, candidates)
+                    if idx is None:
+                        # Retry with a genuinely different query rather than
+                        # re-judging the same (evidently wrong-domain, or
+                        # empty) results again — see _suggest_alternative_query.
+                        alt_query = _suggest_alternative_query(
+                            query, caption or query, [c["title"] for c in candidates])
+                        if alt_query:
+                            _log(f"retrying search: query={query!r} -> {alt_query!r}")
+                            alt_candidates = search_images(alt_query, limit=6, source=source)["results"]
+                            alt_idx = _choose_candidate(caption or query, alt_candidates)
+                            if alt_idx is not None:
+                                query, candidates, idx = alt_query, alt_candidates, alt_idx
                     if idx is None:
                         _log(f"no image used for query={query!r} ({len(candidates)} candidate(s) offered)")
                     if idx is not None:

@@ -86,22 +86,6 @@
           <span id="ai-target-path" class="ai-target-path">Whole textbook</span>
         </div>
 
-        <div class="ai-overarching">
-          <button type="button" id="ai-overarching-toggle" class="ai-overarching-toggle" aria-expanded="false">
-            <span class="ai-oa-chevron">▸</span>
-            <span class="ai-tag-label">Overarching prompt</span>
-            <span id="ai-overarching-badge" class="ai-oa-badge" hidden>Set</span>
-          </button>
-          <div id="ai-overarching-body" class="ai-overarching-body" hidden>
-            <p class="ai-oa-hint">Applied to every generation for this book, so you don't have to retype it — e.g. “Please consider a historical perspective” or “Don't use em-dashes.”</p>
-            <textarea id="ai-overarching" class="ai-prompt ai-overarching-input" rows="3"
-              placeholder="A standing instruction for this book…"></textarea>
-            <div class="ai-overarching-foot">
-              <button type="button" id="ai-overarching-clear" class="mini-link">Clear</button>
-            </div>
-          </div>
-        </div>
-
         <label class="ai-count-row" id="ai-count-row">
           <span>Number of headings</span>
           <input id="ai-count" type="number" min="1" max="20" value="3" />
@@ -134,10 +118,35 @@
           </div>
         </div>
 
-        <label class="ai-count-row" id="ai-images-row" hidden>
-          <span>🖼 Let DeepSeek search &amp; insert images <span class="hint">(via Wikimedia/Pexels)</span></span>
-          <input id="ai-use-images" type="checkbox">
-        </label>
+        <div class="ai-advanced">
+          <button type="button" id="ai-advanced-toggle" class="ai-advanced-toggle" aria-expanded="false">
+            <span class="ai-adv-chevron">▸</span>
+            <span class="ai-tag-label">Advanced</span>
+            <span id="ai-overarching-badge" class="ai-oa-badge" hidden>Prompt set</span>
+          </button>
+          <div id="ai-advanced-body" class="ai-advanced-body" hidden>
+            <div class="ai-overarching-block">
+              <span class="ai-tag-label">Overarching prompt</span>
+              <p class="ai-oa-hint">Applied to every generation for this book, so you don't have to retype it — e.g. “Please consider a historical perspective” or “Don't use em-dashes.”</p>
+              <textarea id="ai-overarching" class="ai-prompt ai-overarching-input" rows="3"
+                placeholder="A standing instruction for this book…"></textarea>
+              <div class="ai-overarching-foot">
+                <button type="button" id="ai-overarching-clear" class="mini-link">Clear</button>
+              </div>
+            </div>
+
+            <div id="ai-images-block" class="ai-images-block" hidden>
+              <label class="ai-count-row" id="ai-images-row">
+                <span>🖼 Let DeepSeek search &amp; insert images <span class="hint">(via Wikimedia/Pexels)</span></span>
+                <input id="ai-use-images" type="checkbox">
+              </label>
+              <div id="ai-image-sources" class="ai-image-sources">
+                <label><input id="ai-src-wikimedia" type="checkbox">Wikimedia</label>
+                <label><input id="ai-src-pexels" type="checkbox">Pexels</label>
+              </div>
+            </div>
+          </div>
+        </div>
 
         <div class="ai-bulk-queue" id="ai-bulk-queue" hidden>
           <span class="ai-tag-label">Bulk queue <span class="hint">— generated one at a time</span></span>

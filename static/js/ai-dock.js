@@ -17,7 +17,7 @@ let ctrl = null;
 let renderThrottle = 0;
 let wasBulk = false;
 let bulkRunning = false;
-let oaOpen = false;         // "Overarching prompt" disclosure — collapsed by default
+let advOpen = false;        // "Advanced" disclosure (overarching prompt + image options) — collapsed by default
 let oaLastBookId = undefined;   // re-seed the textarea only when the book actually changes
 let oaSaveTimer = null;
 
@@ -36,6 +36,13 @@ export function mountDock(refs) {
 
   els.useImages.addEventListener("change", () => {
     store.setSetting("useImages", els.useImages.checked);
+    syncImageSourcesEnabled();
+  });
+  els.srcWikimedia.addEventListener("change", () => {
+    store.setSetting("useWikimedia", els.srcWikimedia.checked);
+  });
+  els.srcPexels.addEventListener("change", () => {
+    store.setSetting("usePexels", els.srcPexels.checked);
   });
 
   els.refineRow.querySelectorAll(".seg-btn").forEach((b) => {
@@ -79,7 +86,7 @@ export function mountDock(refs) {
     store.startBulkPick();
   });
 
-  els.oaToggle.addEventListener("click", () => setOaOpen(!oaOpen));
+  els.advToggle.addEventListener("click", () => setAdvOpen(!advOpen));
   els.oaInput.addEventListener("input", () => {
     updateOaBadge();
     clearTimeout(oaSaveTimer);
@@ -106,11 +113,21 @@ function updateOaBadge() {
   els.oaBadge.hidden = !(els.oaInput.value || "").trim();
 }
 
-function setOaOpen(open) {
-  oaOpen = open;
-  els.oaBody.hidden = !open;
-  els.oaToggle.setAttribute("aria-expanded", String(open));
-  els.oaToggle.classList.toggle("is-open", open);
+function setAdvOpen(open) {
+  advOpen = open;
+  els.advBody.hidden = !open;
+  els.advToggle.setAttribute("aria-expanded", String(open));
+  els.advToggle.classList.toggle("is-open", open);
+}
+
+/** The two source checkboxes only make sense while "Use images" itself is
+ *  on — dimmed and inert otherwise, rather than hidden outright, so their
+ *  own ticked state stays visible even while the whole feature is off. */
+function syncImageSourcesEnabled() {
+  const on = els.useImages.checked;
+  els.imageSources.classList.toggle("is-disabled", !on);
+  els.srcWikimedia.disabled = !on;
+  els.srcPexels.disabled = !on;
 }
 
 function buildChips(container, values, settingKey) {
@@ -149,7 +166,7 @@ export function updateDock(state) {
     clearTimeout(oaSaveTimer);
     els.oaInput.value = state.book ? (store.getSetting("overarchingPrompt") || "") : "";
     updateOaBadge();
-    setOaOpen(false);
+    setAdvOpen(false);
   }
 
   const sig = `${bookId}|${state.book?.topic || ""}|${state.selectedId || ""}`;
@@ -178,8 +195,11 @@ export function updateDock(state) {
   syncChips(els.depths, store.getSetting("depth"));
   els.refineRow.hidden = !(mode === "content" && sectionHasContent());
 
-  els.imagesRow.hidden = mode !== "content";
+  els.imagesBlock.hidden = mode !== "content";
   els.useImages.checked = !!store.getSetting("useImages");
+  els.srcWikimedia.checked = store.getSetting("useWikimedia") !== false;
+  els.srcPexels.checked = store.getSetting("usePexels") !== false;
+  syncImageSourcesEnabled();
 
   els.subModeRow.hidden = !onSubheading;
   els.subModeRow.querySelectorAll(".seg-btn")
@@ -244,7 +264,7 @@ function applyBulkView(state) {
   els.subModeRow.querySelectorAll(".seg-btn")
     .forEach((x) => x.classList.toggle("active", x.dataset.sub === subMode));
   els.refineRow.hidden = true;
-  els.imagesRow.hidden = bmode !== "content";
+  els.imagesBlock.hidden = bmode !== "content";
   els.countRow.hidden = bmode !== "subheadings";
   if (bmode === "subheadings") els.countRow.querySelector("span").textContent = "Subheadings per block";
 
@@ -397,6 +417,8 @@ async function run() {
     refine,
     contextIds,
     useImages: current.mode === "content" && store.getSetting("useImages"),
+    useWikimedia: store.getSetting("useWikimedia"),
+    usePexels: store.getSetting("usePexels"),
   };
 
   els.stream.hidden = current.mode === "content";
@@ -551,7 +573,9 @@ async function runBulk() {
       const full = await streamOnce(
         { mode, bookId: book.id, nodeId: targetId, count, prompt,
           tone, depth, refine: false, contextIds,
-          useImages: mode === "content" && store.getSetting("useImages") },
+          useImages: mode === "content" && store.getSetting("useImages"),
+          useWikimedia: store.getSetting("useWikimedia"),
+          usePexels: store.getSetting("usePexels") },
         mode, targetId,
       );
       if (full && full.trim()) done += 1;

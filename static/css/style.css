@@ -616,24 +616,37 @@ body.is-resizing-y, body.is-resizing-y * { cursor: ns-resize !important; user-se
 }
 .ai-target-path { font-size: 12.5px; font-weight: 600; line-height: 1.45; overflow-wrap: anywhere; }
 
-.ai-overarching { border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--glass-hi); }
-.ai-overarching-toggle {
+.ai-advanced { border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--glass-hi); }
+.ai-advanced-toggle {
   display: flex; align-items: center; gap: 7px; width: 100%;
   border: 0; background: transparent; cursor: pointer;
   padding: 8px 10px; border-radius: var(--radius-sm); text-align: left;
 }
-.ai-overarching-toggle:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
-.ai-oa-chevron { font-size: 10px; color: var(--ink-soft); flex: none; transition: transform .15s ease; }
-.ai-overarching-toggle.is-open .ai-oa-chevron { transform: rotate(90deg); }
+.ai-advanced-toggle:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.ai-adv-chevron { font-size: 10px; color: var(--ink-soft); flex: none; transition: transform .15s ease; }
+.ai-advanced-toggle.is-open .ai-adv-chevron { transform: rotate(90deg); }
 .ai-oa-badge {
   margin-left: auto; font-size: 10px; font-weight: 700; letter-spacing: .04em;
   color: var(--accent-ink); background: linear-gradient(180deg, var(--accent-2), var(--accent));
   padding: 2px 7px; border-radius: 999px;
 }
-.ai-overarching-body { padding: 0 10px 10px; display: flex; flex-direction: column; gap: 6px; }
+.ai-advanced-body {
+  padding: 0 10px 10px; display: flex; flex-direction: column; gap: 14px;
+}
+.ai-overarching-block { display: flex; flex-direction: column; gap: 6px; }
 .ai-oa-hint { margin: 0; font-size: 11.5px; color: var(--ink-faint); line-height: 1.4; }
 .ai-overarching-input { min-height: 64px; }
 .ai-overarching-foot { display: flex; justify-content: flex-end; }
+
+.ai-images-block { display: flex; flex-direction: column; gap: 8px; }
+.ai-image-sources { display: flex; gap: 16px; padding-left: 2px; transition: opacity .12s ease; }
+.ai-image-sources label {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 600; color: var(--ink-soft); cursor: pointer;
+}
+.ai-image-sources input[type="checkbox"] { accent-color: var(--accent); }
+.ai-image-sources.is-disabled { opacity: .5; }
+.ai-image-sources.is-disabled label { cursor: default; }
 
 .ai-count-row {
   display: flex;

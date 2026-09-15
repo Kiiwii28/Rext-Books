@@ -112,13 +112,16 @@ const STEPS = [
     target: "#ai-mode-chip",
   },
   {
-    title: "Overarching prompt",
-    body: "A standing instruction applied to <b>every</b> generation for this " +
-      "book, so you don't have to keep retyping it — things like “consider a " +
-      "historical perspective” or “don't use em-dashes.” Click to open it; " +
-      "it stays put no matter what you click on next, and travels with the " +
-      "book. <b>Clear</b> wipes it.",
-    target: "#ai-overarching-toggle",
+    title: "Advanced",
+    body: "Click to open. The <b>overarching prompt</b> is a standing " +
+      "instruction applied to every generation for this book, so you don't " +
+      "have to keep retyping it — things like “consider a historical " +
+      "perspective” or “don't use em-dashes.” It stays put no matter what " +
+      "you click on next, and travels with the book (<b>Clear</b> wipes " +
+      "it). Below it, for content sections, is the option to let DeepSeek " +
+      "<b>search Wikimedia/Pexels and insert real images</b> as it writes — " +
+      "with tickboxes to allow or block each source.",
+    target: "#ai-advanced-toggle",
   },
   {
     title: "Tone & depth",

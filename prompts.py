@@ -151,8 +151,8 @@ def _content_system_prompt(*, no_diagrams: bool = False, no_images: bool = False
             "with a fenced ```image-search block instead — the app searches for "
             "and inserts a real image server-side after you finish. Format exactly:\n"
             "```image-search\n"
-            "query: <specific search terms describing what the image should show>\n"
-            "caption: <a short caption describing exactly what it depicts>\n"
+            "query: <short search terms for the general subject or a fitting visual>\n"
+            "caption: <a short caption naming the general idea or theme it represents>\n"
             "```\n"
             "in place of an image tag, on its own line. If the app can't find a "
             "match, the request is silently dropped — so this never breaks the "
@@ -192,15 +192,26 @@ def _content_system_prompt(*, no_diagrams: bool = False, no_images: bool = False
         )
         if use_images:
             defaults.append(
-                "Keep each image-search query SHORT — 2 to 4 keywords, like typing "
-                'into an image search engine (e.g. "neuron diagram", "mitochondria '
-                'structure", "eiffel tower"), never a full sentence or long '
-                "descriptive phrase — those return far fewer/worse matches. Put all "
-                "the specific detail in the caption instead (e.g. \"Diagram of a "
-                'neuron labelling the dendrites, cell body, and axon") — it doubles '
-                "as the alt text and as the yardstick used to judge which of the "
-                "real search results actually matches; a vague caption like \"a "
-                'neuron" makes that judgment far less reliable too.'
+                "Keep each image-search query VERY short — just the core subject "
+                "or its proper name, 2-3 words, never a scene description. Strip "
+                'out every context/action/location word: write "fruit basket" not '
+                '"fruit basket on a table", "portfolio" not "portfolio held by a '
+                'man", "BCG matrix" not "BCG growth-share matrix diagram", "eiffel '
+                'tower" not "the eiffel tower at sunset in paris". A search engine '
+                "matches on the bare noun — every extra word narrows the results "
+                "and reliably returns fewer, worse matches, sometimes none at all."
+            )
+            defaults.append(
+                "These images are for visual enrichment, not literal illustration "
+                "— you're not commissioning a bespoke diagram, you're picking "
+                "something with the right idea or feel from what real search "
+                "results actually offer. So the caption should name the general "
+                'concept or a fitting visual metaphor (e.g. "A chart representing '
+                'portfolio diversification", or "Puzzle pieces, representing '
+                'strategic fit") rather than a precise scenario — a real image '
+                "that captures the same theme is a good match even when its exact "
+                "composition differs (a bar chart instead of a pie chart, a "
+                "completed puzzle instead of scattered pieces, etc.)."
             )
     defaults.append("Keep it a focused subsection, not an exhaustive treatise.")
 

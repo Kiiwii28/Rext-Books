@@ -38,7 +38,10 @@ let pendingEdit = null;
 export const getPendingEdit = () => pendingEdit;
 export function clearPendingEdit() { pendingEdit = null; }
 
-export const DEFAULT_SETTINGS = { tone: "Informative", depth: "Intermediate", palette: "popular", overarchingPrompt: "", useImages: false };
+export const DEFAULT_SETTINGS = {
+  tone: "Informative", depth: "Intermediate", palette: "popular", overarchingPrompt: "",
+  useImages: false, useWikimedia: true, usePexels: true,
+};
 
 export function setBook(book) {
   pendingEdit = null;

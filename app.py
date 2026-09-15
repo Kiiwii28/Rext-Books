@@ -376,7 +376,8 @@ def _collect_context(book: dict, ids: list, *, exclude_ids: set | None = None) -
 
 
 def _stream_chat_response(messages: list[dict], start_payload: dict,
-                          *, resolve_images_book_id: str | None = None) -> Response:
+                          *, resolve_images_book_id: str | None = None,
+                          resolve_images_source: str = "auto") -> Response:
     """Shared SSE wrapper for /api/ai/generate and /api/ai/spark.
 
     When ``resolve_images_book_id`` is set (content mode with the "Use
@@ -401,7 +402,7 @@ def _stream_chat_response(messages: list[dict], start_payload: dict,
                     yield _sse("status", {"message": "Finding images…"})
                     try:
                         revised, resolved, total = images.resolve_image_placeholders(
-                            full, resolve_images_book_id)
+                            full, resolve_images_book_id, source=resolve_images_source)
                     except Exception as exc:
                         import traceback
                         print(f"[app] resolve_image_placeholders crashed: {exc!r}", file=sys.stderr, flush=True)
@@ -437,6 +438,8 @@ def api_generate():
     refine = bool(body.get("refine"))
     context_ids = body.get("contextIds") or []
     use_images = bool(body.get("useImages"))
+    use_wikimedia = bool(body.get("useWikimedia", True))
+    use_pexels = bool(body.get("usePexels", True))
 
     if mode not in prompts.MODES:
         return jsonify({"error": f"mode must be one of {prompts.MODES}"}), 400
@@ -485,9 +488,20 @@ def api_generate():
         mode, user_prompt, tone=tone, depth=depth, refine_source=refine_source,
         context_blocks=context_blocks, overarching=overarching, use_images=use_images,
     )
+    # Which source(s) the "Use images" toggle is allowed to draw from — both
+    # ticked keeps today's Wikimedia-first/Pexels-fallback behaviour; one
+    # ticked restricts to just that source; neither means every placeholder
+    # is dropped (images.search_images already treats "none" as zero results).
+    image_source = (
+        "auto" if use_wikimedia and use_pexels else
+        "wikimedia" if use_wikimedia else
+        "pexels" if use_pexels else
+        "none"
+    )
     return _stream_chat_response(messages, {
         "mode": mode, "refine": refine_source is not None, "context": len(context_blocks),
-    }, resolve_images_book_id=(book_id if mode == "content" and use_images else None))
+    }, resolve_images_book_id=(book_id if mode == "content" and use_images else None),
+       resolve_images_source=image_source)
 
 
 @app.post("/api/ai/spark")
