@@ -3,7 +3,7 @@
 import * as store from "./store.js";
 import { streamGenerate } from "./api.js";
 import {
-  resolveMode, hasSubTopics, fillTemplate, parseList, COUNT_LABEL, TONES, DEPTHS,
+  resolveMode, hasSubTopics, fillTemplate, parseList, COUNT_LABEL, TONES, DEPTHS, FREQUENCIES,
 } from "./prompts.js";
 
 let els = {};
@@ -33,6 +33,9 @@ export function mountDock(refs) {
 
   buildChips(els.tones, TONES, "tone");
   buildChips(els.depths, DEPTHS, "depth");
+  buildChips(els.diagramFreq, FREQUENCIES, "diagramFrequency");
+  buildChips(els.length, FREQUENCIES, "length");
+  buildChips(els.imageFreq, FREQUENCIES, "imageFrequency");
 
   els.useImages.addEventListener("change", () => {
     store.setSetting("useImages", els.useImages.checked);
@@ -43,6 +46,12 @@ export function mountDock(refs) {
   });
   els.srcPexels.addEventListener("change", () => {
     store.setSetting("usePexels", els.srcPexels.checked);
+  });
+  els.summarySection.addEventListener("change", () => {
+    store.setSetting("summarySection", els.summarySection.checked);
+  });
+  els.terminologySection.addEventListener("change", () => {
+    store.setSetting("terminologySection", els.terminologySection.checked);
   });
 
   els.refineRow.querySelectorAll(".seg-btn").forEach((b) => {
@@ -120,14 +129,16 @@ function setAdvOpen(open) {
   els.advToggle.classList.toggle("is-open", open);
 }
 
-/** The two source checkboxes only make sense while "Use images" itself is
- *  on — dimmed and inert otherwise, rather than hidden outright, so their
- *  own ticked state stays visible even while the whole feature is off. */
+/** Image frequency + the two source checkboxes only make sense while "Use
+ *  images" itself is on — dimmed and inert otherwise, rather than hidden
+ *  outright, so their own state stays visible even while the whole feature
+ *  is off. */
 function syncImageSourcesEnabled() {
   const on = els.useImages.checked;
-  els.imageSources.classList.toggle("is-disabled", !on);
+  els.imageOptions.classList.toggle("is-disabled", !on);
   els.srcWikimedia.disabled = !on;
   els.srcPexels.disabled = !on;
+  els.imageFreq.querySelectorAll(".chip").forEach((c) => { c.disabled = !on; });
 }
 
 function buildChips(container, values, settingKey) {
@@ -195,8 +206,15 @@ export function updateDock(state) {
   syncChips(els.depths, store.getSetting("depth"));
   els.refineRow.hidden = !(mode === "content" && sectionHasContent());
 
+  els.contentOptions.hidden = mode !== "content";
+  syncChips(els.diagramFreq, store.getSetting("diagramFrequency"));
+  syncChips(els.length, store.getSetting("length"));
+  els.summarySection.checked = store.getSetting("summarySection") !== false;
+  els.terminologySection.checked = !!store.getSetting("terminologySection");
+
   els.imagesBlock.hidden = mode !== "content";
   els.useImages.checked = !!store.getSetting("useImages");
+  syncChips(els.imageFreq, store.getSetting("imageFrequency"));
   els.srcWikimedia.checked = store.getSetting("useWikimedia") !== false;
   els.srcPexels.checked = store.getSetting("usePexels") !== false;
   syncImageSourcesEnabled();
@@ -264,6 +282,7 @@ function applyBulkView(state) {
   els.subModeRow.querySelectorAll(".seg-btn")
     .forEach((x) => x.classList.toggle("active", x.dataset.sub === subMode));
   els.refineRow.hidden = true;
+  els.contentOptions.hidden = bmode !== "content";
   els.imagesBlock.hidden = bmode !== "content";
   els.countRow.hidden = bmode !== "subheadings";
   if (bmode === "subheadings") els.countRow.querySelector("span").textContent = "Subheadings per block";
@@ -419,6 +438,11 @@ async function run() {
     useImages: current.mode === "content" && store.getSetting("useImages"),
     useWikimedia: store.getSetting("useWikimedia"),
     usePexels: store.getSetting("usePexels"),
+    imageFrequency: store.getSetting("imageFrequency"),
+    diagramFrequency: store.getSetting("diagramFrequency"),
+    length: store.getSetting("length"),
+    summarySection: store.getSetting("summarySection"),
+    terminologySection: store.getSetting("terminologySection"),
   };
 
   els.stream.hidden = current.mode === "content";
@@ -575,7 +599,12 @@ async function runBulk() {
           tone, depth, refine: false, contextIds,
           useImages: mode === "content" && store.getSetting("useImages"),
           useWikimedia: store.getSetting("useWikimedia"),
-          usePexels: store.getSetting("usePexels") },
+          usePexels: store.getSetting("usePexels"),
+          imageFrequency: store.getSetting("imageFrequency"),
+          diagramFrequency: store.getSetting("diagramFrequency"),
+          length: store.getSetting("length"),
+          summarySection: store.getSetting("summarySection"),
+          terminologySection: store.getSetting("terminologySection") },
         mode, targetId,
       );
       if (full && full.trim()) done += 1;

@@ -20,6 +20,7 @@ export const COUNT_LABEL = {
 
 export const TONES = ["Technical", "Academic", "Blog", "Conversational", "Informative", "Casual"];
 export const DEPTHS = ["Beginner", "Intermediate", "Advanced"];
+export const FREQUENCIES = ["Low", "Medium", "High"];
 
 /** Given the selected node (or null), return { mode, targetId, node }.
  *  - nothing                 -> outline (whole book)

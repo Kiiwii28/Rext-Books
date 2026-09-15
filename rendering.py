@@ -66,6 +66,11 @@ def _fix_image(tag: str) -> str:
 
 def render_markdown(text: str) -> str:
     md = markdown.Markdown(extensions=MD_EXTENSIONS, output_format="html5")
+    # Python-Markdown's default escapable set doesn't include "$" — the model
+    # sometimes writes "\$42" (a habit from contexts where "$" starts inline
+    # math), which without this just passes the literal backslash straight
+    # through into the rendered page instead of being consumed as an escape.
+    md.ESCAPED_CHARS.append("$")
     html = md.convert(text or "")
     html = _MERMAID.sub(
         r'<figure class="mermaid-figure"><pre class="mermaid">\1</pre></figure>',

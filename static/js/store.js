@@ -41,6 +41,8 @@ export function clearPendingEdit() { pendingEdit = null; }
 export const DEFAULT_SETTINGS = {
   tone: "Informative", depth: "Intermediate", palette: "popular", overarchingPrompt: "",
   useImages: false, useWikimedia: true, usePexels: true,
+  imageFrequency: "Medium", diagramFrequency: "Medium", length: "Medium",
+  summarySection: true, terminologySection: false,
 };
 
 export function setBook(book) {

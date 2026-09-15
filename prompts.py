@@ -106,8 +106,12 @@ SYSTEM_PROMPTS = {
 }
 
 
+FREQUENCIES = ("Low", "Medium", "High")
+
 def _content_system_prompt(*, no_diagrams: bool = False, no_images: bool = False,
-                           use_images: bool = False) -> str:
+                           use_images: bool = False, image_frequency: str = "Medium",
+                           diagram_frequency: str = "Medium", length: str = "Medium",
+                           summary_section: bool = True, terminology_section: bool = False) -> str:
     """Built per-request (not baked into SYSTEM_PROMPTS) so that an explicit "no
     diagrams" / "no images" ask can drop the matching RULE+DEFAULT pair entirely,
     instead of leaving a DEFAULT that plainly tells the model to add one right
@@ -168,16 +172,39 @@ def _content_system_prompt(*, no_diagrams: bool = False, no_images: bool = False
             "diagram or describe it in a sentence instead — do not emit an image tag."
         )
 
-    defaults = [
-        'Open with a short orienting paragraph and close with a brief "Summary".',
-        "Use worked examples where they aid understanding.",
-    ]
-    if not no_diagrams:
+    defaults = ["Open with a short orienting paragraph."]
+    if length != "Low":
+        # Worked examples add length on their own — skip suggesting them when
+        # the length preference is fighting to stay brief; otherwise the two
+        # DEFAULTS pull in opposite directions and brevity tends to lose.
+        defaults.append("Use worked examples where they aid understanding.")
+    if summary_section:
+        defaults.append('End with a brief "Summary" section recapping the key points.')
+    else:
+        # A plain omission isn't enough here — closing with a "Summary" is
+        # such a strong, common textbook convention that the model adds one
+        # unprompted even with no instruction either way (confirmed: turning
+        # this off while saying nothing further still produced a Summary
+        # section). Needs an explicit negative, the same as no_diagrams/
+        # no_images above.
+        defaults.append('Do NOT include a separate "Summary" section.')
+    if terminology_section:
         defaults.append(
-            "Include about one Mermaid diagram where a process, hierarchy, flow, "
-            "sequence or timeline genuinely clarifies things. If the user asks for "
-            "more diagrams, comply — up to about six."
+            'End with a "Terminology" section (after the Summary, if there is one) '
+            "listing and briefly defining the key terms introduced in this subsection."
         )
+    else:
+        defaults.append('Do NOT include a separate "Terminology" section.')
+    if not no_diagrams:
+        defaults.append({
+            "Low": "Only include a Mermaid diagram if it's genuinely essential — most "
+                   "subsections should have none at all. At most one.",
+            "Medium": "Include about one Mermaid diagram where a process, hierarchy, "
+                      "flow, sequence or timeline genuinely clarifies things. If the "
+                      "user asks for more diagrams, comply — up to about six.",
+            "High": "Look for good opportunities to add Mermaid diagrams — aim for two "
+                    "to four where they'd genuinely help, up to about eight.",
+        }[diagram_frequency])
         defaults.append(
             "Keep each Mermaid diagram compact enough to fit on one page: at most ~10 "
             "nodes, short labels, and for a long chain or sequence use a left-to-right "
@@ -186,10 +213,14 @@ def _content_system_prompt(*, no_diagrams: bool = False, no_images: bool = False
             "one."
         )
     if not no_images:
-        defaults.append(
-            "Use images sparingly — about one where it truly adds value. If the user "
-            "asks for more images, comply — up to about eight."
-        )
+        defaults.append({
+            "Low": "Use images sparingly — only where it truly adds value, and often "
+                   "none at all. At most one.",
+            "Medium": "Use images sparingly — about one where it truly adds value. If "
+                      "the user asks for more images, comply — up to about eight.",
+            "High": "Look for good opportunities to add images — two or three is fine "
+                    "where they'd genuinely help, up to about eight.",
+        }[image_frequency])
         if use_images:
             defaults.append(
                 "Keep each image-search query VERY short — just the core subject "
@@ -213,7 +244,15 @@ def _content_system_prompt(*, no_diagrams: bool = False, no_images: bool = False
                 "composition differs (a bar chart instead of a pie chart, a "
                 "completed puzzle instead of scattered pieces, etc.)."
             )
-    defaults.append("Keep it a focused subsection, not an exhaustive treatise.")
+    defaults.append({
+        "Low": "Keep the body VERY brief — two or three short paragraphs covering "
+               "only the essential point, full stop. No extra subsections, no "
+               "worked example, no deep dive — brevity wins over completeness "
+               "here even if that means leaving nuance out.",
+        "Medium": "Keep it a focused subsection, not an exhaustive treatise.",
+        "High": "Go deep — cover the subsection thoroughly, with more examples, "
+                "nuance and supporting detail than a brief overview would.",
+    }[length])
 
     return _frame(
         "You are an expert textbook author writing the body text for ONE subsection.",
@@ -259,7 +298,10 @@ def build_messages(mode: str, user_prompt: str, *, tone: str | None = None,
                    depth: str | None = None, refine_source: str | None = None,
                    context_blocks: list[str] | None = None,
                    overarching: str | None = None,
-                   use_images: bool = False) -> list[dict]:
+                   use_images: bool = False,
+                   image_frequency: str = "Medium", diagram_frequency: str = "Medium",
+                   length: str = "Medium", summary_section: bool = True,
+                   terminology_section: bool = False) -> list[dict]:
     if mode not in MODES:
         raise ValueError(f"unknown mode: {mode!r}")
 
@@ -271,6 +313,11 @@ def build_messages(mode: str, user_prompt: str, *, tone: str | None = None,
             no_diagrams=bool(_NO_DIAGRAMS_RE.search(combined_hint)),
             no_images=bool(_NO_IMAGES_RE.search(combined_hint)),
             use_images=use_images,
+            image_frequency=image_frequency if image_frequency in FREQUENCIES else "Medium",
+            diagram_frequency=diagram_frequency if diagram_frequency in FREQUENCIES else "Medium",
+            length=length if length in FREQUENCIES else "Medium",
+            summary_section=summary_section,
+            terminology_section=terminology_section,
         )
     else:
         system_prompt = SYSTEM_PROMPTS[mode]

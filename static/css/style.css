@@ -638,15 +638,19 @@ body.is-resizing-y, body.is-resizing-y * { cursor: ns-resize !important; user-se
 .ai-overarching-input { min-height: 64px; }
 .ai-overarching-foot { display: flex; justify-content: flex-end; }
 
-.ai-images-block { display: flex; flex-direction: column; gap: 8px; }
-.ai-image-sources { display: flex; gap: 16px; padding-left: 2px; transition: opacity .12s ease; }
+.ai-content-options { display: flex; flex-direction: column; gap: 10px; }
+.ai-images-block { display: flex; flex-direction: column; gap: 10px; }
+.ai-image-options { display: flex; flex-direction: column; gap: 8px; transition: opacity .12s ease; }
+.ai-image-options.is-disabled { opacity: .5; }
+.ai-image-sources { display: flex; gap: 16px; padding-left: 2px; }
 .ai-image-sources label {
   display: flex; align-items: center; gap: 6px;
   font-size: 12px; font-weight: 600; color: var(--ink-soft); cursor: pointer;
 }
 .ai-image-sources input[type="checkbox"] { accent-color: var(--accent); }
-.ai-image-sources.is-disabled { opacity: .5; }
-.ai-image-sources.is-disabled label { cursor: default; }
+.ai-image-options.is-disabled .ai-image-sources label,
+.ai-image-options.is-disabled .chip.toggle { cursor: default; }
+.chip.toggle:disabled { pointer-events: none; }
 
 .ai-count-row {
   display: flex;
@@ -666,10 +670,12 @@ body.is-resizing-y, body.is-resizing-y * { cursor: ns-resize !important; user-se
   background: var(--glass-solid);
   color: var(--ink);
 }
-#ai-images-row input[type="checkbox"] {
+#ai-images-row input[type="checkbox"],
+#ai-summary-row input[type="checkbox"],
+#ai-terms-row input[type="checkbox"] {
   width: auto; padding: 0; accent-color: var(--accent); flex: none;
 }
-#ai-images-row span { flex: 1; padding-right: 10px; }
+#ai-images-row span, #ai-summary-row span, #ai-terms-row span { flex: 1; padding-right: 10px; }
 
 .ai-prompt-label { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-soft); }
 .ai-prompt-label .hint { color: var(--ink-faint); font-weight: 600; text-transform: none; letter-spacing: 0; }

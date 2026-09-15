@@ -135,14 +135,39 @@
               </div>
             </div>
 
+            <div id="ai-content-options" class="ai-content-options" hidden>
+              <div class="ai-tag-group">
+                <span class="ai-tag-label">Diagram frequency</span>
+                <div id="ai-diagram-freq" class="chip-row" role="radiogroup" aria-label="Diagram frequency"></div>
+              </div>
+              <div class="ai-tag-group">
+                <span class="ai-tag-label">Length</span>
+                <div id="ai-length" class="chip-row" role="radiogroup" aria-label="Length"></div>
+              </div>
+              <label class="ai-count-row" id="ai-summary-row">
+                <span>Summary section</span>
+                <input id="ai-summary-section" type="checkbox">
+              </label>
+              <label class="ai-count-row" id="ai-terms-row">
+                <span>Terminology section</span>
+                <input id="ai-terms-section" type="checkbox">
+              </label>
+            </div>
+
             <div id="ai-images-block" class="ai-images-block" hidden>
               <label class="ai-count-row" id="ai-images-row">
                 <span>🖼 Let DeepSeek search &amp; insert images <span class="hint">(via Wikimedia/Pexels)</span></span>
                 <input id="ai-use-images" type="checkbox">
               </label>
-              <div id="ai-image-sources" class="ai-image-sources">
-                <label><input id="ai-src-wikimedia" type="checkbox">Wikimedia</label>
-                <label><input id="ai-src-pexels" type="checkbox">Pexels</label>
+              <div id="ai-image-options" class="ai-image-options">
+                <div class="ai-tag-group">
+                  <span class="ai-tag-label">Image frequency</span>
+                  <div id="ai-image-freq" class="chip-row" role="radiogroup" aria-label="Image frequency"></div>
+                </div>
+                <div id="ai-image-sources" class="ai-image-sources">
+                  <label><input id="ai-src-wikimedia" type="checkbox">Wikimedia</label>
+                  <label><input id="ai-src-pexels" type="checkbox">Pexels</label>
+                </div>
               </div>
             </div>
           </div>

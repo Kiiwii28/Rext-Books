@@ -440,6 +440,11 @@ def api_generate():
     use_images = bool(body.get("useImages"))
     use_wikimedia = bool(body.get("useWikimedia", True))
     use_pexels = bool(body.get("usePexels", True))
+    image_frequency = body.get("imageFrequency") or "Medium"
+    diagram_frequency = body.get("diagramFrequency") or "Medium"
+    length = body.get("length") or "Medium"
+    summary_section = bool(body.get("summarySection", True))
+    terminology_section = bool(body.get("terminologySection"))
 
     if mode not in prompts.MODES:
         return jsonify({"error": f"mode must be one of {prompts.MODES}"}), 400
@@ -487,6 +492,8 @@ def api_generate():
     messages = prompts.build_messages(
         mode, user_prompt, tone=tone, depth=depth, refine_source=refine_source,
         context_blocks=context_blocks, overarching=overarching, use_images=use_images,
+        image_frequency=image_frequency, diagram_frequency=diagram_frequency, length=length,
+        summary_section=summary_section, terminology_section=terminology_section,
     )
     # Which source(s) the "Use images" toggle is allowed to draw from — both
     # ticked keeps today's Wikimedia-first/Pexels-fallback behaviour; one
