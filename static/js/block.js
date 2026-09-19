@@ -9,6 +9,8 @@ import { applyMarkdownAction } from "./md-toolbar.js";
 
 const TYPE_LABEL = { heading: "Heading", subheading: "Subheading", section: "Section" };
 const EDITOR_HEIGHT_KEY = "rextbooks:editorHeight";   // remembered manual editor height, in px
+const FS_SPLIT_KEY = "rextbooks:fsSplit";     // remembered fullscreen editor/preview split, 0..1
+const FS_VIEW_KEY = "rextbooks:fsView";       // remembered fullscreen view mode: split | raw | preview
 
 const esc = (s) => String(s).replace(/[&<>"]/g,
   (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -67,6 +69,7 @@ export function createBlock(node, { selectedId, onChange, context }) {
   const pick = context && context.pick;
   if (pick && context.picked) wrap.classList.add(context.mode === "spark" ? "is-spark" : "is-context");
   if (pick && context.mode === "bulk" && context.picked) wrap.classList.add("is-bulk");
+  if (pick && context.mode === "bulk" && context.indeterminate) wrap.classList.add("is-bulk-partial");
   if (pick && context.isTarget) wrap.classList.add("is-context-target");
 
   const hasChildren = (node.children || []).length > 0;
@@ -101,6 +104,7 @@ export function createBlock(node, { selectedId, onChange, context }) {
     checkbox.type = "checkbox";
     checkbox.className = "b-ctx-check";
     checkbox.checked = !!context.picked;
+    checkbox.indeterminate = !!context.indeterminate;
     checkbox.disabled = !!context.disabled;
     checkbox.title = context.isTarget
       ? "This is the block you're generating on"
@@ -109,6 +113,7 @@ export function createBlock(node, { selectedId, onChange, context }) {
            : context.mode === "bulk" ? "Bulk generate needs siblings of the same kind"
            : "Use as context")
       : context.mode === "spark" ? "Pick for Spark"
+      : context.mode === "bulk" && context.indeterminate ? "Some children included — click to select the rest"
       : context.mode === "bulk" ? "Include in bulk generation"
       : "Use as context";
     checkbox.addEventListener("click", (e) => e.stopPropagation());
@@ -233,36 +238,43 @@ export function createBlock(node, { selectedId, onChange, context }) {
     const ed = document.createElement("div");
     ed.className = "b-section-edit";
     ed.innerHTML = `
-      <div class="b-edit-bar">
-        <button class="b-tool" data-act="image" title="Insert an image">🖼&nbsp;Image</button>
-        <span class="b-edit-hint">Markdown — you can also paste an image straight in</span>
-        <span class="flex"></span>
-        <button class="b-tool" data-act="fullscreen" title="Expand editor">⛶</button>
-        <button class="btn ghost sm" data-act="cancel">Cancel</button>
-        <button class="btn primary sm" data-act="done">Done</button>
-      </div>
-      <div class="b-image-panel" hidden></div>
-      <div class="b-md-toolbar">
-        <button class="b-tool" data-md="h1" title="Heading 1">H1</button>
-        <button class="b-tool" data-md="h2" title="Heading 2">H2</button>
-        <button class="b-tool" data-md="h3" title="Heading 3">H3</button>
-        <button class="b-tool" data-md="h4" title="Heading 4">H4</button>
-        <button class="b-tool" data-md="h5" title="Heading 5">H5</button>
-        <button class="b-tool" data-md="h6" title="Heading 6">H6</button>
-        <span class="md-sep"></span>
-        <button class="b-tool md-bold" data-md="bold" title="Bold (Ctrl+B)">B</button>
-        <button class="b-tool md-italic" data-md="italic" title="Italic (Ctrl+I)">I</button>
-        <button class="b-tool md-strike" data-md="strike" title="Strikethrough">S</button>
-        <button class="b-tool md-code" data-md="code" title="Inline code">&lt;/&gt;</button>
-        <span class="md-sep"></span>
-        <button class="b-tool" data-md="ul" title="Bulleted list">•︲list</button>
-        <button class="b-tool" data-md="ol" title="Numbered list">1.list</button>
-        <button class="b-tool" data-md="quote" title="Blockquote">❝</button>
-        <span class="md-sep"></span>
-        <button class="b-tool" data-md="link" title="Link (Ctrl+K)">🔗</button>
-        <button class="b-tool" data-md="table" title="Insert table">▦&nbsp;Table</button>
-        <button class="b-tool" data-md="codeblock" title="Code block">{ }</button>
-        <button class="b-tool" data-md="hr" title="Horizontal rule">―</button>
+      <div class="b-edit-head">
+        <div class="b-edit-bar">
+          <button class="b-tool" data-act="image" title="Insert an image">🖼&nbsp;Image</button>
+          <span class="b-edit-hint">Markdown — you can also paste an image straight in</span>
+          <span class="flex"></span>
+          <div class="b-view-seg segmented" hidden>
+            <button type="button" class="seg-btn" data-view="split">Split</button>
+            <button type="button" class="seg-btn" data-view="raw">Raw</button>
+            <button type="button" class="seg-btn" data-view="preview">Preview</button>
+          </div>
+          <button class="b-tool" data-act="fullscreen" title="Expand editor">⛶</button>
+          <button class="btn ghost sm" data-act="cancel">Cancel</button>
+          <button class="btn primary sm" data-act="done">Done</button>
+        </div>
+        <div class="b-image-panel" hidden></div>
+        <div class="b-md-toolbar">
+          <button class="b-tool" data-md="h1" title="Heading 1">H1</button>
+          <button class="b-tool" data-md="h2" title="Heading 2">H2</button>
+          <button class="b-tool" data-md="h3" title="Heading 3">H3</button>
+          <button class="b-tool" data-md="h4" title="Heading 4">H4</button>
+          <button class="b-tool" data-md="h5" title="Heading 5">H5</button>
+          <button class="b-tool" data-md="h6" title="Heading 6">H6</button>
+          <span class="md-sep"></span>
+          <button class="b-tool md-bold" data-md="bold" title="Bold (Ctrl+B)">B</button>
+          <button class="b-tool md-italic" data-md="italic" title="Italic (Ctrl+I)">I</button>
+          <button class="b-tool md-strike" data-md="strike" title="Strikethrough">S</button>
+          <button class="b-tool md-code" data-md="code" title="Inline code">&lt;/&gt;</button>
+          <span class="md-sep"></span>
+          <button class="b-tool" data-md="ul" title="Bulleted list">•︲list</button>
+          <button class="b-tool" data-md="ol" title="Numbered list">1.list</button>
+          <button class="b-tool" data-md="quote" title="Blockquote">❝</button>
+          <span class="md-sep"></span>
+          <button class="b-tool" data-md="link" title="Link (Ctrl+K)">🔗</button>
+          <button class="b-tool" data-md="table" title="Insert table">▦&nbsp;Table</button>
+          <button class="b-tool" data-md="codeblock" title="Code block">{ }</button>
+          <button class="b-tool" data-md="hr" title="Horizontal rule">―</button>
+        </div>
       </div>
       <textarea class="b-section-editor" spellcheck="true"></textarea>
       <div class="b-resize-handle" tabindex="0" role="separator" aria-orientation="horizontal"
@@ -274,6 +286,7 @@ export function createBlock(node, { selectedId, onChange, context }) {
     const imagePanel = ed.querySelector(".b-image-panel");
     const resizeHandle = ed.querySelector(".b-resize-handle");
     const fsBtn = ed.querySelector('[data-act="fullscreen"]');
+    const viewSeg = ed.querySelector(".b-view-seg");
     ta.value = node.content || "";
 
     // A manually-chosen height (drag, or remembered from last time) sticks —
@@ -285,6 +298,32 @@ export function createBlock(node, { selectedId, onChange, context }) {
     let fullscreen = false;
     let backdrop = null;
     let swapModal = null;   // built lazily on first double-click, reused after that
+
+    // ---- fullscreen: adjustable editor/preview split + view mode ----------
+    let fsSplit = readSavedSplit();        // fraction of the split the editor pane gets, 0..1
+    let viewMode = readSavedView();        // "split" | "raw" | "preview" — fullscreen only
+    ed.classList.add(`view-${viewMode}`);
+    viewSeg.querySelectorAll("[data-view]").forEach(
+      (b) => b.classList.toggle("active", b.dataset.view === viewMode));
+
+    function applyFsSplit() {
+      ta.style.flex = `1 1 ${(fsSplit * 100).toFixed(2)}%`;
+      preview.style.flex = `1 1 ${((1 - fsSplit) * 100).toFixed(2)}%`;
+    }
+    applyFsSplit();
+
+    function setViewMode(mode) {
+      viewMode = mode;
+      ed.classList.remove("view-split", "view-raw", "view-preview");
+      ed.classList.add(`view-${mode}`);
+      viewSeg.querySelectorAll("[data-view]").forEach((b) => b.classList.toggle("active", b.dataset.view === mode));
+      try { localStorage.setItem(FS_VIEW_KEY, mode); } catch {}
+      if (mode !== "preview") ta.focus();
+    }
+    viewSeg.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-view]");
+      if (btn) setViewMode(btn.dataset.view);
+    });
 
     let t;
     const refreshPreview = () => {
@@ -388,13 +427,38 @@ export function createBlock(node, { selectedId, onChange, context }) {
       ta.style.height = manualHeight + "px";
       try { localStorage.setItem(EDITOR_HEIGHT_KEY, String(Math.round(manualHeight))); } catch {}
     }
+    // In fullscreen, the same handle instead drags the editor/preview split —
+    // a fraction of the two panes' combined height, so it survives window
+    // resizes cleanly (unlike a fixed pixel height).
+    function setSplit(taPx, combinedPx) {
+      fsSplit = Math.min(Math.max(taPx / combinedPx, 0.15), 0.85);
+      applyFsSplit();
+      try { localStorage.setItem(FS_SPLIT_KEY, fsSplit.toFixed(4)); } catch {}
+    }
     resizeHandle.addEventListener("pointerdown", (e) => {
-      if (fullscreen) return;
       e.preventDefault();
       const startY = e.clientY;
-      const startH = ta.getBoundingClientRect().height;
       resizeHandle.setPointerCapture(e.pointerId);
       document.body.classList.add("is-resizing-y");
+
+      if (fullscreen) {
+        const combined = ta.getBoundingClientRect().height + preview.getBoundingClientRect().height;
+        const startTa = ta.getBoundingClientRect().height;
+        const onMove = (ev) => setSplit(startTa + (ev.clientY - startY), combined);
+        const onUp = () => {
+          resizeHandle.releasePointerCapture(e.pointerId);
+          document.body.classList.remove("is-resizing-y");
+          resizeHandle.removeEventListener("pointermove", onMove);
+          resizeHandle.removeEventListener("pointerup", onUp);
+          resizeHandle.removeEventListener("pointercancel", onUp);
+        };
+        resizeHandle.addEventListener("pointermove", onMove);
+        resizeHandle.addEventListener("pointerup", onUp);
+        resizeHandle.addEventListener("pointercancel", onUp);
+        return;
+      }
+
+      const startH = ta.getBoundingClientRect().height;
       const onMove = (ev) => setHeight(startH + (ev.clientY - startY));
       const onUp = () => {
         resizeHandle.releasePointerCapture(e.pointerId);
@@ -408,6 +472,12 @@ export function createBlock(node, { selectedId, onChange, context }) {
       resizeHandle.addEventListener("pointercancel", onUp);
     });
     resizeHandle.addEventListener("dblclick", () => {
+      if (fullscreen) {
+        fsSplit = 0.45;
+        applyFsSplit();
+        try { localStorage.removeItem(FS_SPLIT_KEY); } catch {}
+        return;
+      }
       manualHeight = null;
       try { localStorage.removeItem(EDITOR_HEIGHT_KEY); } catch {}
       autosize(ta);
@@ -415,6 +485,11 @@ export function createBlock(node, { selectedId, onChange, context }) {
     resizeHandle.addEventListener("keydown", (e) => {
       if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
       e.preventDefault();
+      if (fullscreen) {
+        const combined = ta.getBoundingClientRect().height + preview.getBoundingClientRect().height;
+        setSplit(ta.getBoundingClientRect().height + (e.key === "ArrowDown" ? 16 : -16), combined);
+        return;
+      }
       setHeight(ta.getBoundingClientRect().height + (e.key === "ArrowDown" ? 24 : -24));
     });
 
@@ -428,7 +503,9 @@ export function createBlock(node, { selectedId, onChange, context }) {
       ed.classList.toggle("is-fullscreen", on);
       fsBtn.classList.toggle("active", on);
       fsBtn.title = on ? "Collapse editor" : "Expand editor";
+      viewSeg.hidden = !on;   // Split/Raw/Preview only make sense with room to spare
       if (on) {
+        applyFsSplit();
         backdrop = document.createElement("div");
         backdrop.className = "b-edit-fs-backdrop";
         backdrop.addEventListener("click", () => setFullscreen(false));
@@ -438,7 +515,7 @@ export function createBlock(node, { selectedId, onChange, context }) {
         backdrop = null;
         body.parentNode.insertBefore(ed, body.nextSibling);   // back to its spot in the tree
       }
-      ta.focus();
+      if (viewMode !== "preview") ta.focus();
     }
 
     ed.querySelector(".b-edit-bar").addEventListener("click", (e) => {
@@ -693,6 +770,24 @@ function readSavedHeight() {
     return Number.isFinite(v) && v >= 120 ? v : null;
   } catch {
     return null;
+  }
+}
+
+function readSavedSplit() {
+  try {
+    const v = parseFloat(localStorage.getItem(FS_SPLIT_KEY) || "");
+    return Number.isFinite(v) && v >= 0.15 && v <= 0.85 ? v : 0.45;
+  } catch {
+    return 0.45;
+  }
+}
+
+function readSavedView() {
+  try {
+    const v = localStorage.getItem(FS_VIEW_KEY);
+    return v === "raw" || v === "preview" ? v : "split";
+  } catch {
+    return "split";
   }
 }
 

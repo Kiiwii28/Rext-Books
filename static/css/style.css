@@ -672,10 +672,13 @@ body.is-resizing-y, body.is-resizing-y * { cursor: ns-resize !important; user-se
 }
 #ai-images-row input[type="checkbox"],
 #ai-summary-row input[type="checkbox"],
-#ai-terms-row input[type="checkbox"] {
+#ai-terms-row input[type="checkbox"],
+#export-lite-row input[type="checkbox"] {
   width: auto; padding: 0; accent-color: var(--accent); flex: none;
 }
-#ai-images-row span, #ai-summary-row span, #ai-terms-row span { flex: 1; padding-right: 10px; }
+#ai-images-row span, #ai-summary-row span, #ai-terms-row span,
+#export-lite-row span { flex: 1; padding-right: 10px; }
+#export-lite-row { cursor: pointer; }
 
 .ai-prompt-label { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-soft); }
 .ai-prompt-label .hint { color: var(--ink-faint); font-weight: 600; text-transform: none; letter-spacing: 0; }
@@ -792,6 +795,13 @@ body.is-resizing-y, body.is-resizing-y * { cursor: ns-resize !important; user-se
   display: block; font-size: 20px; opacity: .5; margin-bottom: 6px;
 }
 .markdown-body .fig-placeholder figcaption { font-size: 12.5px; font-style: italic; }
+
+/* a real image, optionally with an attribution caption right below it —
+   promoted from a bare <p><img>...</p> so PDF page-break-avoidance actually
+   holds (see rendering.py's _IMG_ONLY_P) */
+.markdown-body .img-figure { margin: 1.2em auto; text-align: center; }
+.markdown-body .img-figure img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+.markdown-body .img-figure figcaption { font-size: 12.5px; font-style: italic; color: var(--ink-faint); margin-top: 6px; }
 
 /* ---------- segmented control ---------- */
 .segmented {
@@ -924,6 +934,10 @@ body.is-resizing-y, body.is-resizing-y * { cursor: ns-resize !important; user-se
   background: color-mix(in srgb, var(--accent-2) 20%, transparent);
   box-shadow: inset 3px 0 0 var(--accent-2);
 }
+.block.is-bulk-partial > .block-row {
+  background: color-mix(in srgb, var(--accent-2) 8%, transparent);
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent-2) 45%, transparent);
+}
 .tree.pick-mode[data-pick="spark"] .pick-banner,
 .pick-banner.spark { background: color-mix(in srgb, #f0a020 16%, transparent);
   border-color: color-mix(in srgb, #f0a020 40%, transparent); }
@@ -979,7 +993,29 @@ body.is-resizing-y, body.is-resizing-y * { cursor: ns-resize !important; user-se
   border-radius: var(--radius-sm);
   background: var(--glass-solid);
   box-shadow: var(--shadow-sm), var(--shine);
-  overflow: hidden;
+  /* No overflow:hidden on this box — it would make it its own scroll
+     container and stop `position: sticky` on .b-edit-head below from
+     sticking to the real scrolling ancestor (.tree). The two children with
+     a fill colour round their own corners instead (see below). */
+}
+.b-edit-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--glass-solid);
+  border-top-left-radius: var(--radius-sm);
+  border-top-right-radius: var(--radius-sm);
+  overflow: hidden;   /* corner-clip only — nothing inside needs to stick */
+  /* In fullscreen this is a flex item alongside the editor/preview panes.
+     Its automatic flex-shrink minimum becomes 0 because of the overflow
+     above, so with no protection it shrinks proportionally to its *own*
+     tiny natural size vs. the panes' — and a long rendered document can be
+     enormously taller than the box, especially in Preview view where the
+     preview pane is the only other flex item soaking up the deficit. That
+     proportional split still squeezes this small header down toward zero.
+     flex-shrink: 0 keeps it fixed at its natural height always; the panes
+     (which already scroll internally) absorb all of the size deficit instead. */
+  flex-shrink: 0;
 }
 .b-edit-bar {
   display: flex; align-items: center; gap: 8px;
@@ -994,6 +1030,7 @@ body.is-resizing-y, body.is-resizing-y * { cursor: ns-resize !important; user-se
   background: linear-gradient(180deg, var(--accent-2), var(--accent));
   border-color: transparent;
 }
+.b-view-seg.segmented { padding: 2px; }
 
 /* ---------- markdown formatting toolbar ---------- */
 .b-md-toolbar {
@@ -1046,6 +1083,9 @@ body.is-resizing-y, body.is-resizing-y * { cursor: ns-resize !important; user-se
   border-top: 1px dashed var(--line-strong);
   padding: 14px 16px; background: color-mix(in srgb, var(--ink) 3%, transparent);
   font-size: 14px;
+  border-bottom-left-radius: var(--radius-sm);
+  border-bottom-right-radius: var(--radius-sm);
+  overflow: hidden;   /* corner-clip only — this pane has no sticky children */
 }
 .b-edit-preview:empty { display: none; }
 .b-edit-preview img { cursor: pointer; transition: filter .12s ease; }
@@ -1066,17 +1106,34 @@ body.is-resizing-y, body.is-resizing-y * { cursor: ns-resize !important; user-se
   flex-direction: column;
   box-shadow: 0 28px 72px -16px rgba(0, 0, 0, .45), var(--shine);
 }
-.b-section-edit.is-fullscreen .b-section-editor {
-  flex: 1 1 45%;
-  min-height: 0;
-}
-.b-section-edit.is-fullscreen .b-resize-handle { display: none; }
+/* .b-edit-head's sticky positioning targets whatever scrolling ancestor is
+   nearest — normally .tree. In fullscreen the editor is reparented to
+   <body> (see block.js), so with nothing else scrolling around it, sticky
+   would instead anchor to the viewport itself: since this fixed box starts
+   4vh down but a stuck top:0 means the true top of the page, the header
+   renders above the box's own top edge, cut off. Not needed here anyway —
+   the flex column already keeps it permanently visible without stickiness. */
+.b-section-edit.is-fullscreen .b-edit-head { position: static; }
+.b-section-edit.is-fullscreen .b-section-editor,
 .b-section-edit.is-fullscreen .b-edit-preview {
-  flex: 1 1 55%;
   min-height: 0;
-  overflow-y: auto;
+  /* actual split ratio (default 45/55) is set inline by block.js so it can
+     be dragged via the resize handle and remembered across sessions */
 }
-.b-section-edit.is-fullscreen .b-image-panel { overflow-y: auto; max-height: 40vh; }
+.b-section-edit.is-fullscreen .b-edit-preview { overflow-y: auto; }
+
+/* Raw / Preview give one pane the whole height and hide the divider; Split
+   (the default) keeps both, sized by the draggable .b-resize-handle. */
+.b-section-edit.is-fullscreen.view-raw .b-edit-preview,
+.b-section-edit.is-fullscreen.view-raw .b-resize-handle,
+.b-section-edit.is-fullscreen.view-preview .b-section-editor,
+.b-section-edit.is-fullscreen.view-preview .b-resize-handle {
+  display: none;
+}
+.b-section-edit.is-fullscreen.view-raw .b-section-editor,
+.b-section-edit.is-fullscreen.view-preview .b-edit-preview {
+  flex: 1 1 auto !important;
+}
 
 .b-section-body.is-empty { color: var(--ink-faint); font-style: italic; }
 
@@ -1084,6 +1141,10 @@ body.is-resizing-y, body.is-resizing-y * { cursor: ns-resize !important; user-se
 .b-image-panel {
   padding: 10px; border-bottom: 1px solid var(--line);
   background: color-mix(in srgb, var(--accent) 5%, transparent);
+  /* Capped even outside fullscreen now that it lives inside the sticky
+     .b-edit-head — an open-ended search-results list would otherwise be
+     free to occupy the whole viewport while pinned to the top. */
+  max-height: 40vh; overflow-y: auto;
 }
 .ip-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
 .ip-tab {

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import sys
 
 import requests
@@ -30,6 +31,14 @@ import store
 from rendering import render_markdown
 
 app = Flask(__name__)
+# Static files (JS/CSS) default to Werkzeug's heuristic caching, which can let
+# a browser keep serving a stale module/stylesheet across an ordinary reload
+# for a long time after it's changed on disk — a normal refresh looked like
+# it "didn't work" even though the file itself was already fixed. Forcing a
+# revalidation (a fast 304 when unchanged, a fresh copy when not) on every
+# request means an edit is always picked up on the very next reload, no hard
+# refresh required.
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 
 
 def _slug(text: str) -> str:
@@ -64,6 +73,7 @@ def api_get_settings():
         "model": config.DEEPSEEK_MODEL,
         "author": config.get_author(),
         "hasPexelsKey": bool(config.get_pexels_key()),
+        "pexelsUsage": config.get_pexels_usage(),
     })
 
 
@@ -252,6 +262,13 @@ def _parse_exclude() -> set:
     return {x for x in raw.split(",") if x}
 
 
+def _parse_lite() -> bool:
+    """The Export dialog's "Lite" toggle — shrinks/recompresses images and
+    diagrams for a smaller PDF/EPUB. Absent/off means the unchanged default
+    export."""
+    return request.args.get("lite", "") in ("1", "true", "on")
+
+
 @app.get("/api/books/<book_id>/export.json")
 def export_json(book_id: str):
     book = store.get_book(book_id)
@@ -286,7 +303,17 @@ def export_pdf(book_id: str):
     if not export.pdf_available():
         return jsonify({"error": export.pdf_error()}), 501
     palette = request.args.get("palette") or (book.get("settings") or {}).get("palette")
-    pdf = export.book_to_pdf(book, palette, base_url=request.url_root, exclude_ids=_parse_exclude())
+    try:
+        pdf = export.book_to_pdf(book, palette, base_url=request.url_root, exclude_ids=_parse_exclude(),
+                                 lite=_parse_lite())
+    except subprocess.TimeoutExpired:
+        return jsonify({
+            "error": "PDF export timed out (tried twice) — this book may be too large or "
+                     "image/diagram-heavy for one export pass. Try excluding some content "
+                     "via Export → Content to include, or exporting chapters separately.",
+        }), 504
+    except Exception as exc:
+        return jsonify({"error": f"PDF export failed: {exc}"}), 500
     return Response(pdf, mimetype="application/pdf", headers={
         "Content-Disposition": f'attachment; filename="{_slug(book.get("title"))}.pdf"',
     })
@@ -299,7 +326,14 @@ def export_epub(book_id: str):
         return jsonify({"error": "not found"}), 404
     palette = request.args.get("palette") or (book.get("settings") or {}).get("palette")
     try:
-        data = epub.book_to_epub(book, palette, base_url=request.url_root, exclude_ids=_parse_exclude())
+        data = epub.book_to_epub(book, palette, base_url=request.url_root, exclude_ids=_parse_exclude(),
+                                 lite=_parse_lite())
+    except subprocess.TimeoutExpired:
+        return jsonify({
+            "error": "EPUB export timed out (tried twice) — this book may be too large or "
+                     "diagram-heavy for one export pass. Try excluding some content via "
+                     "Export → Content to include, or exporting chapters separately.",
+        }), 504
     except Exception as exc:
         return jsonify({"error": f"EPUB export failed: {exc}"}), 500
     return Response(data, mimetype="application/epub+zip", headers={
@@ -373,6 +407,53 @@ def _collect_context(book: dict, ids: list, *, exclude_ids: set | None = None) -
     rec(book.get("nodes") or [], 0)
     text = "\n\n".join(lines).strip()
     return [text] if text else []
+
+
+def _book_outline(book: dict, *, mark_id: str | None = None,
+                  context_ids: set | None = None) -> str:
+    """A titles-only outline of the WHOLE book (headings/subheadings, no body
+    text), with the node currently being generated and any picked-context
+    nodes flagged in place — so the model can see the book's overall shape
+    and where its assigned subsection sits within it (what chapter, what
+    precedes/follows it) without the weight of full section text.
+
+    Sections don't carry their own titles (they hold the body text of their
+    parent heading/subheading), so they're skipped here entirely; a section
+    id in ``mark_id``/``context_ids`` should already have been resolved to
+    its titled parent by the caller.
+    """
+    context_ids = context_ids or set()
+    lines: list[str] = []
+
+    def rec(nodes: list[dict], depth: int) -> None:
+        for n in nodes:
+            if n.get("type") == "section":
+                continue
+            title = (n.get("title") or "").strip()
+            if title:
+                tag = (
+                    "  <-- you are writing this now" if n.get("id") == mark_id else
+                    "  (picked as extra context)" if n.get("id") in context_ids else
+                    ""
+                )
+                lines.append("  " * depth + "- " + title + tag)
+            rec(n.get("children") or [], depth + 1)
+
+    rec(book.get("nodes") or [], 0)
+    return "\n".join(lines)
+
+
+def _titled_id(book: dict, node_id: str | None) -> str | None:
+    """A node's own id, or its nearest titled ancestor's id if it's a section
+    (sections show up in the outline as their parent's line, not their own)."""
+    if not node_id:
+        return None
+    node, parent = store.find_node(book.get("nodes") or [], node_id)
+    if node is None:
+        return None
+    if node.get("type") == "section":
+        return parent.get("id") if parent else None
+    return node_id
 
 
 def _stream_chat_response(messages: list[dict], start_payload: dict,
@@ -489,11 +570,20 @@ def api_generate():
     context_blocks = _collect_context(book, context_ids, exclude_ids=exclude_ids)
     overarching = (book.get("settings") or {}).get("overarchingPrompt") or ""
 
+    # A titles-only map of the whole book, with the node being written and any
+    # picked context flagged in place, so the model can see where its subsection
+    # sits relative to the rest of the book (what chapter, what's around it) —
+    # not just the direct ancestor breadcrumb already in the task prompt.
+    mark_id = _titled_id(book, node.get("id")) if node is not None else None
+    outline_context_ids = {i for i in (_titled_id(book, i) for i in context_ids) if i}
+    book_outline = _book_outline(book, mark_id=mark_id, context_ids=outline_context_ids)
+
     messages = prompts.build_messages(
         mode, user_prompt, tone=tone, depth=depth, refine_source=refine_source,
         context_blocks=context_blocks, overarching=overarching, use_images=use_images,
         image_frequency=image_frequency, diagram_frequency=diagram_frequency, length=length,
         summary_section=summary_section, terminology_section=terminology_section,
+        book_outline=book_outline,
     )
     # Which source(s) the "Use images" toggle is allowed to draw from — both
     # ticked keeps today's Wikimedia-first/Pexels-fallback behaviour; one

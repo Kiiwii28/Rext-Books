@@ -172,23 +172,19 @@ export function contextRootIds() {
   );
 }
 
-/** Toggle a node in the bulk set. Constrained to siblings of one type. */
-export function toggleBulk(id) {
-  if (!id) return;
-  const hit = findNode(id);
-  if (!hit) return;
-  const set = new Set(state.bulkIds);
-  if (set.has(id)) {
-    set.delete(id);
-  } else {
-    if (state.bulkIds.length) {
-      const first = findNode(state.bulkIds[0]);
-      const sameType = first && first.node.type === hit.node.type;
-      const sameParent = (first?.parent?.id ?? null) === (hit.parent?.id ?? null);
-      if (!sameType || !sameParent) return;
-    }
-    set.add(id);
-  }
+/** A node whose children stand in for it in the bulk picker: a container of
+ *  further structure (subheadings), as opposed to a leaf that holds its own
+ *  content (a section, or a subheading whose content already lives in a
+ *  child section). Only containers get the "select the parent, get every
+ *  child" shortcut — a node with a section child must stay individually
+ *  pickable, or there'd be no way to bulk-(re)generate content for several
+ *  already-written subheadings at once. */
+export function isBulkContainer(node) {
+  const kids = node?.children || [];
+  return kids.length > 0 && !kids.some((k) => k.type === "section");
+}
+
+function finalizeBulk(set) {
   let ids = [...set];
   const anchor = ids.length ? findNode(ids[0]) : null;
   if (anchor) {
@@ -201,6 +197,48 @@ export function toggleBulk(id) {
     bulkParent: anchor ? (anchor.parent?.id ?? null) : null,
   };
   emit();
+}
+
+/** Picking every child of a container in one go — same "one level, one kind"
+ *  rule as an individual pick, just applied to the whole group at once. */
+function toggleBulkChildren(node) {
+  const kids = node.children || [];
+  const kidIds = kids.map((k) => k.id);
+  if (!kidIds.length) return;
+  if (state.bulkIds.length) {
+    const first = findNode(state.bulkIds[0]);
+    const sameType = first && first.node.type === kids[0].type;
+    const sameParent = (first?.parent?.id ?? null) === node.id;
+    if (!sameType || !sameParent) return;
+  }
+  const set = new Set(state.bulkIds);
+  const allIn = kidIds.every((x) => set.has(x));
+  for (const x of kidIds) allIn ? set.delete(x) : set.add(x);
+  finalizeBulk(set);
+}
+
+/** Toggle a node in the bulk set. Constrained to siblings of one type — but
+ *  clicking a container (see isBulkContainer) selects/clears its whole set
+ *  of children in one go, instead of requiring each to be ticked by hand. */
+export function toggleBulk(id) {
+  if (!id) return;
+  const hit = findNode(id);
+  if (!hit) return;
+  if (isBulkContainer(hit.node)) return toggleBulkChildren(hit.node);
+
+  const set = new Set(state.bulkIds);
+  if (set.has(id)) {
+    set.delete(id);
+  } else {
+    if (state.bulkIds.length) {
+      const first = findNode(state.bulkIds[0]);
+      const sameType = first && first.node.type === hit.node.type;
+      const sameParent = (first?.parent?.id ?? null) === (hit.parent?.id ?? null);
+      if (!sameType || !sameParent) return;
+    }
+    set.add(id);
+  }
+  finalizeBulk(set);
 }
 
 export function clearContext() {

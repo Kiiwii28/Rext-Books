@@ -49,19 +49,59 @@ def available() -> bool:
     return find_browser() is not None
 
 
-def url_to_pdf(url: str, *, timeout: int = 60) -> bytes:
+def _default_timeout() -> int:
+    import config   # imported lazily to avoid any import-order surprises
+    return config.PDF_RENDER_TIMEOUT
+
+
+def _run_with_retry(build_cmd, *, timeout: int, retries: int, prefix: str,
+                    check) -> subprocess.CompletedProcess:
+    """Run a headless-Chrome subprocess, retrying on a timeout or crash —
+    observed in practice: a large/complex render can time out or the browser
+    process itself can crash on a first attempt and succeed on a second, with
+    nothing else about the request changed. Each attempt gets a brand new
+    temp profile (never reuses one from a failed attempt — a crashed Chrome
+    profile can leave lock files that make a retry against it fail too).
+
+    ``build_cmd(out_dir) -> (cmd, out_path)`` builds the command for one
+    attempt; ``check(proc, out_path)`` raises if that attempt's result looks
+    wrong (e.g. no output file) — its exception becomes what a final failure
+    raises."""
+    last_exc: Exception | None = None
+    for attempt in range(retries + 1):
+        with tempfile.TemporaryDirectory(prefix=prefix) as d:
+            cmd, out_path = build_cmd(Path(d))
+            try:
+                proc = subprocess.run(cmd, capture_output=True, timeout=timeout)
+                check(proc, out_path)
+                return proc
+            except (subprocess.TimeoutExpired, RuntimeError) as exc:
+                last_exc = exc
+    raise last_exc
+
+
+def url_to_pdf(url: str, *, timeout: int | None = None, retries: int = 1) -> bytes:
     exe = find_browser()
     if not exe:
         raise RuntimeError("No Chrome/Edge/Chromium found for PDF rendering.")
-    with tempfile.TemporaryDirectory(prefix="rext-pdf-") as d:
-        out = Path(d) / "book.pdf"
+    timeout = _default_timeout() if timeout is None else timeout
+    captured: dict[str, bytes] = {}
+
+    def build(d: Path):
+        out = d / "book.pdf"
         cmd = [
             exe,
-            "--headless",
+            # The old (default) "--headless" mode never populates the PDF's
+            # bookmark outline regardless of --generate-pdf-document-outline —
+            # verified empirically (empty outline every time). Only the newer
+            # "--headless=new" mode actually generates it, which the running
+            # header feature in export.py depends on to know which chapter/
+            # heading is current on each page.
+            "--headless=new",
             "--disable-gpu",
             "--no-sandbox",
             "--no-first-run",
-            f"--user-data-dir={Path(d) / 'profile'}",
+            f"--user-data-dir={d / 'profile'}",
             "--no-pdf-header-footer",           # drop the date / title / URL chrome
             "--print-to-pdf-no-header",         # older flag name, harmless if unknown
             "--run-all-compositor-stages-before-draw",
@@ -70,14 +110,23 @@ def url_to_pdf(url: str, *, timeout: int = 60) -> bytes:
             f"--print-to-pdf={out}",
             url,
         ]
-        proc = subprocess.run(cmd, capture_output=True, timeout=timeout)
+        return cmd, out
+
+    def check(proc, out: Path):
+        # Read the bytes here, inside the temp dir's lifetime — the
+        # TemporaryDirectory is deleted the moment this attempt's `with`
+        # block exits (success or failure alike), so out.read_bytes() would
+        # fail if deferred to after _run_with_retry returns.
         if not out.exists() or out.stat().st_size == 0:
             err = proc.stderr.decode("utf-8", "replace")[-500:]
             raise RuntimeError(f"Headless browser did not produce a PDF. {err}")
-        return out.read_bytes()
+        captured["data"] = out.read_bytes()
+
+    _run_with_retry(build, timeout=timeout, retries=retries, prefix="rext-pdf-", check=check)
+    return captured["data"]
 
 
-def dump_rendered_dom(url: str, *, timeout: int = 60) -> str:
+def dump_rendered_dom(url: str, *, timeout: int | None = None, retries: int = 1) -> str:
     """Load `url`, let it fully render (Mermaid diagrams, broken-image swaps)
     via the virtual time budget, and return the post-JS DOM as HTML text.
 
@@ -88,28 +137,37 @@ def dump_rendered_dom(url: str, *, timeout: int = 60) -> str:
     exe = find_browser()
     if not exe:
         raise RuntimeError("No Chrome/Edge/Chromium found for diagram rendering.")
-    with tempfile.TemporaryDirectory(prefix="rext-dom-") as d:
+    timeout = _default_timeout() if timeout is None else timeout
+    captured: dict[str, str] = {}
+
+    def build(d: Path):
         cmd = [
             exe,
             "--headless",
             "--disable-gpu",
             "--no-sandbox",
             "--no-first-run",
-            f"--user-data-dir={Path(d) / 'profile'}",
+            f"--user-data-dir={d / 'profile'}",
             "--run-all-compositor-stages-before-draw",
             "--virtual-time-budget=25000",
             "--dump-dom",
             url,
         ]
-        proc = subprocess.run(cmd, capture_output=True, timeout=timeout)
+        return cmd, None
+
+    def check(proc, _out):
         text = proc.stdout.decode("utf-8", "replace")
         if not text.strip():
             err = proc.stderr.decode("utf-8", "replace")[-500:]
             raise RuntimeError(f"Headless browser did not return any DOM. {err}")
-        return text
+        captured["text"] = text
+
+    _run_with_retry(build, timeout=timeout, retries=retries, prefix="rext-dom-", check=check)
+    return captured["text"]
 
 
-def screenshot_html(html: str, width: int, height: int, *, timeout: int = 30) -> bytes:
+def screenshot_html(html: str, width: int, height: int, *, timeout: int = 30,
+                    retries: int = 1) -> bytes:
     """Render a small standalone HTML snippet and return a PNG screenshot
     (transparent background). Used to rasterize a single Mermaid diagram for
     EPUB: the diagram's live SVG uses foreignObject-embedded HTML labels and
@@ -122,25 +180,32 @@ def screenshot_html(html: str, width: int, height: int, *, timeout: int = 30) ->
     exe = find_browser()
     if not exe:
         raise RuntimeError("No Chrome/Edge/Chromium found for diagram rendering.")
-    with tempfile.TemporaryDirectory(prefix="rext-shot-") as d:
-        html_path = Path(d) / "snippet.html"
+    captured: dict[str, bytes] = {}
+
+    def build(d: Path):
+        html_path = d / "snippet.html"
         html_path.write_text(html, encoding="utf-8")
-        out = Path(d) / "out.png"
+        out = d / "out.png"
         cmd = [
             exe,
             "--headless",
             "--disable-gpu",
             "--no-sandbox",
             "--no-first-run",
-            f"--user-data-dir={Path(d) / 'profile'}",
+            f"--user-data-dir={d / 'profile'}",
             f"--window-size={width},{height}",
             "--hide-scrollbars",
             "--default-background-color=00000000",   # transparent PNG
             f"--screenshot={out}",
             html_path.as_uri(),
         ]
-        proc = subprocess.run(cmd, capture_output=True, timeout=timeout)
+        return cmd, out
+
+    def check(proc, out: Path):
         if not out.exists() or out.stat().st_size == 0:
             err = proc.stderr.decode("utf-8", "replace")[-500:]
             raise RuntimeError(f"Headless browser did not produce a screenshot. {err}")
-        return out.read_bytes()
+        captured["data"] = out.read_bytes()
+
+    _run_with_retry(build, timeout=timeout, retries=retries, prefix="rext-shot-", check=check)
+    return captured["data"]

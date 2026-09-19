@@ -18,6 +18,7 @@ import json
 import os
 import sys
 import threading
+import time
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -50,6 +51,15 @@ CONTEXT_CHAR_BUDGET = int(os.getenv("REXTBOOKS_CONTEXT_CHARS", "400000"))
 
 # Network timeouts (seconds) for the DeepSeek call: (connect, read).
 DEEPSEEK_TIMEOUT = (10, 300)
+
+# Wall-clock ceiling (seconds) for one headless-Chrome PDF/EPUB-render pass.
+# The browser's own --virtual-time-budget flag (how long the page gets to
+# settle before printing) is separate and much shorter — this is just "how
+# long are we willing to wait for the subprocess to finish and hand back a
+# file" once printing/DOM-dumping is actually underway. A large, image- and
+# diagram-heavy book can genuinely take minutes, not seconds. Env-overridable
+# for anyone whose books need longer still.
+PDF_RENDER_TIMEOUT = int(os.getenv("REXTBOOKS_PDF_TIMEOUT", "300"))
 
 
 # --------------------------------------------------------------------------- #
@@ -161,4 +171,23 @@ def set_pexels_key(key: str) -> None:
             data["pexelsApiKey"] = key
         else:
             data.pop("pexelsApiKey", None)
+        _write_settings(data)
+
+
+# Pexels has no usage dashboard on their own site — the only place quota is
+# ever visible is the X-Ratelimit-* response headers on each API call, so
+# images.py records them here (persisted, not just in-memory) every time it
+# actually calls Pexels, and Settings displays the last-known snapshot.
+def get_pexels_usage() -> dict:
+    with _lock:
+        return _read_settings().get("pexelsUsage") or {}
+
+
+def set_pexels_usage(limit: int | None, remaining: int | None, reset: int | None) -> None:
+    with _lock:
+        data = _read_settings()
+        data["pexelsUsage"] = {
+            "limit": limit, "remaining": remaining, "reset": reset,
+            "checkedAt": time.time(),
+        }
         _write_settings(data)

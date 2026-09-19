@@ -153,13 +153,26 @@ function buildList(nodes) {
   return ul;
 }
 
+/** Collect ids of fully-excluded subtrees only. The export backend prunes a
+ *  node's *entire* subtree when its id is excluded, so a partially-included
+ *  ancestor (indeterminate checkbox) must never be added here — only nodes
+ *  with zero included descendants are, and recursion stops there since the
+ *  backend already drops everything underneath. */
+function collectExcluded(nodes, acc) {
+  for (const n of nodes) {
+    const { inc } = subtreeCounts(n);
+    if (inc === 0) acc.push(n.id);
+    else collectExcluded(n.children || [], acc);
+  }
+  return acc;
+}
+
 /** Ids to leave OUT of the export, or null if everything's included
  *  (the common case — keeps the export URL unchanged by default). */
 function excludedIds() {
   const book = store.getBook();
   if (!book) return null;
-  const all = allIds(book.nodes || []);
-  const ex = all.filter((id) => !included.has(id));
+  const ex = collectExcluded(book.nodes || [], []);
   return ex.length ? ex : null;
 }
 
@@ -189,6 +202,10 @@ function markSelected() {
 
 function syncFormat() {
   els.paletteField.hidden = fmt !== "pdf" && fmt !== "epub";
+  // Lite only actually compresses anything server-side for a native PDF
+  // render or an EPUB — the no-native-renderer PDF fallback just opens the
+  // browser's own print dialog, nothing here to shrink.
+  els.liteField.hidden = !(fmt === "epub" || (fmt === "pdf" && pdfNative));
   if (fmt === "pdf") {
     els.note.textContent = pdfNative
       ? "A styled PDF will download — cover page, contents, working links, and a bookmarks/navigation pane matching your headings."
@@ -212,6 +229,7 @@ function open() {
   setContentOpen(false);
   renderContentTree();
   markSelected();
+  els.liteCheckbox.checked = false;   // opt-in each time — default export unless asked otherwise
   syncFormat();
   els.backdrop.hidden = false;
 }
@@ -222,10 +240,11 @@ function go() {
   if (!book) return;
   const palette = store.getSetting("palette");
   const exclude = excludedIds();
+  const lite = els.liteCheckbox.checked;
   if (fmt === "md" || fmt === "json" || fmt === "epub") {
-    window.location.href = exportHref(book.id, fmt, palette, exclude);
+    window.location.href = exportHref(book.id, fmt, palette, exclude, lite);
   } else if (pdfNative) {
-    window.location.href = exportHref(book.id, "pdf", palette, exclude);
+    window.location.href = exportHref(book.id, "pdf", palette, exclude, lite);
   } else {
     window.open(printHref(book.id, palette, exclude), "_blank", "noopener");
   }

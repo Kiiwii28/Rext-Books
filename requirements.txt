@@ -3,6 +3,8 @@ Markdown>=3.5
 requests>=2.31
 python-dotenv>=1.0
 Pillow>=10.0   # EPUB export: crops rasterized Mermaid diagrams out of a batched screenshot
+pypdf>=6.0     # PDF export: reads the generated PDF's outline, merges the running-header overlay
+reportlab>=5.0 # PDF export: draws the running-header text overlay
 
 # PDF export. By default it uses a headless Chrome/Edge/Chromium browser if one
 # is installed (no Python package needed — Edge ships with Windows). WeasyPrint

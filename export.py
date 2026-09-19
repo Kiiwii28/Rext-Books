@@ -12,10 +12,17 @@ from __future__ import annotations
 import html as _html
 import re
 from datetime import date
+from io import BytesIO
 from urllib.parse import quote
 
 import importlib.util
 
+import pypdf
+from reportlab.lib.colors import HexColor
+from reportlab.lib.units import mm
+from reportlab.pdfgen import canvas as _rl_canvas
+
+import compress
 import config
 import palettes
 import pdfgen
@@ -208,7 +215,26 @@ def _doc_css(p: dict[str, str]) -> str:
     th {{ background: {p['accent']}; color: #fff; font-family: 'Helvetica Neue', Arial, sans-serif; }}
     tr:nth-child(even) td {{ background: {p['accent']}0d; }}
 
-    img {{ max-width: 100%; height: auto; display: block; margin: 1em auto; break-inside: avoid; }}
+    /* max-height matters as much as break-inside:avoid here — "avoid" is
+       only a hint the browser can honour when the box actually fits on some
+       page. A tall (portrait-ish) photo scaled to the full content width can
+       easily end up taller than one whole page, and once that happens
+       there's no page big enough to move it to — Chrome fragments it
+       regardless of break-inside. Capping the height (same idea as the
+       Mermaid SVG cap below) guarantees it always fits on one page, so the
+       break-avoidance actually has a chance to work. */
+    img {{
+      max-width: 100%; max-height: 200mm; width: auto; height: auto;
+      display: block; margin: 1em auto; break-inside: avoid;
+    }}
+    /* Chrome's print engine doesn't reliably honour break-inside:avoid on a
+       bare <img> (a replaced element) — it can still split across a page
+       boundary. A block-level <figure> wrapper (rendering.py promotes any
+       single-image paragraph into one) is respected reliably. */
+    figure {{ break-inside: avoid; }}
+    .img-figure {{ margin: 1.3em auto; text-align: center; }}
+    .img-figure img {{ margin: 0 auto; }}
+    .img-figure figcaption {{ font-size: 9pt; font-style: italic; color: {p['muted']}; margin-top: .4em; }}
     hr {{ border: 0; border-top: .75pt solid {p['muted']}66; margin: 1.6em 0; }}
 
     /* mermaid diagrams — a centred, translucent figure like the callouts.
@@ -261,6 +287,12 @@ def _doc_css(p: dict[str, str]) -> str:
     section.chapter > h1 {{
       border-bottom: 3pt solid {p['accent']}; padding-bottom: .25em; margin-bottom: .9em;
     }}
+    /* A "major heading" (a top-level subheading, h2 — see walk() in
+       book_to_html) starts its own fresh page, same as a chapter. Only the
+       structural h2 subheading titles carry this class — a "##" the model
+       writes inside a section's own body text is a plain h2 too, but never
+       gets the class, so it isn't affected. */
+    h2.major-heading {{ break-before: page; }}
     """
 
 
@@ -276,6 +308,7 @@ def book_to_html(book: dict, palette_name: str | None = None, exclude_ids: set |
     body: list[str] = []
 
     def walk(nodes: list[dict], level: int, container_title: str, in_toc: bool) -> None:
+        heading_i = 0   # position among this call's own rendered heading siblings
         for n in nodes:
             if n.get("id") in exclude_ids:
                 continue
@@ -291,17 +324,29 @@ def book_to_html(book: dict, palette_name: str | None = None, exclude_ids: set |
             if level == 1:
                 body.append(f'<section class="chapter"><h1 id="{nid}">{ntitle}</h1>')
             else:
-                body.append(f'<{tag} id="{nid}">{ntitle}</{tag}>')
-            # TOC: chapters + the first two subheading levels
+                # "Major heading" (level 1-2) starts a fresh page — except a
+                # level-2 heading that's the very first thing in its chapter,
+                # which already opens on the chapter's own fresh page; forcing
+                # another break there would leave the chapter title alone on
+                # a blank page before it.
+                major = level == 2 and heading_i > 0
+                cls = ' class="major-heading"' if major else ""
+                body.append(f'<{tag} id="{nid}"{cls}>{ntitle}</{tag}>')
+            # TOC: chapters + the first two subheading levels, nested to match
+            # (level 1 and 2 both open a new <ol> for their own children;
+            # level 3 is a leaf — deeper levels aren't listed at all).
             if in_toc and level <= 3:
-                if level == 1:
+                if level <= 2:
                     toc.append(f'<li><a href="#{nid}">{ntitle}</a><ol>')
                 else:
                     toc.append(f'<li><a href="#{nid}">{ntitle}</a></li>')
+            heading_i += 1
             walk(n.get("children") or [], level + 1, ntitle_raw, in_toc and level <= 2)
             if level == 1:
                 toc.append("</ol></li>")
                 body.append("</section>")
+            elif in_toc and level == 2:
+                toc.append("</ol></li>")
 
     walk(book.get("nodes") or [], 1, title, True)
     has_mermaid = 'class="mermaid"' in "".join(body)
@@ -369,7 +414,118 @@ def _mermaid_script(p: dict[str, str]) -> str:
     )
 
 
-def book_to_pdf(book: dict, palette_name: str | None, base_url: str, exclude_ids: set | None = None) -> bytes:
+def _major_heading_titles(nodes: list[dict], exclude_ids: set) -> tuple[set[str], set[str]]:
+    """Titles of every chapter (level 1) and "major" subheading (level 2,
+    and not the first thing in its chapter) — the exact same classification
+    book_to_html's walk() uses for the major-heading CSS class (see there),
+    re-derived from the node tree directly since the running-header overlay
+    (below) works from the already-rendered PDF, not the HTML."""
+    chapters: set[str] = set()
+    majors: set[str] = set()
+
+    def walk(ns: list[dict], level: int) -> None:
+        heading_i = 0
+        for n in ns:
+            if n.get("id") in exclude_ids:
+                continue
+            if n.get("type") == "section":
+                continue
+            title = n.get("title") or "Untitled"
+            if level == 1:
+                chapters.add(title)
+            elif level == 2 and heading_i > 0:
+                majors.add(title)
+            heading_i += 1
+            walk(n.get("children") or [], level + 1)
+
+    walk(nodes, 1)
+    return chapters, majors
+
+
+def _running_headers(pdf_bytes: bytes, chapter_titles: set[str],
+                     major_titles: set[str]) -> dict[int, tuple[str | None, str | None]]:
+    """For each page (0-indexed), the (chapter, major-heading) breadcrumb
+    that should run in its header — the most recent chapter/major-heading
+    whose own bookmark page is <= this page. Built from Chrome's own
+    --generate-pdf-document-outline output (already relied on for the PDF's
+    navigation pane) — which also includes the cover title and "Contents",
+    so entries are kept only when their title matches a real structural
+    heading from chapter_titles/major_titles."""
+    reader = pypdf.PdfReader(BytesIO(pdf_bytes))
+    n_pages = len(reader.pages)
+    events: list[tuple[int, str, str]] = []
+
+    def walk(items) -> None:
+        for it in items:
+            if isinstance(it, list):
+                walk(it)
+                continue
+            title = (getattr(it, "title", None) or "").strip()
+            try:
+                page = reader.get_destination_page_number(it)
+            except Exception:
+                continue
+            if title in chapter_titles:
+                events.append((page, "chapter", title))
+            elif title in major_titles:
+                events.append((page, "major", title))
+
+    try:
+        walk(reader.outline)
+    except Exception:
+        return {}
+    events.sort(key=lambda e: e[0])
+
+    result: dict[int, tuple[str | None, str | None]] = {}
+    cur_chapter: str | None = None
+    cur_major: str | None = None
+    ei = 0
+    for page in range(n_pages):
+        while ei < len(events) and events[ei][0] <= page:
+            _, kind, title = events[ei]
+            if kind == "chapter":
+                cur_chapter, cur_major = title, None   # a new chapter resets which major heading we're under
+            else:
+                cur_major = title
+            ei += 1
+        result[page] = (cur_chapter, cur_major)
+    return result
+
+
+def _stamp_running_headers(pdf_bytes: bytes, headers: dict[int, tuple[str | None, str | None]],
+                           p: dict[str, str]) -> bytes:
+    """Draw "Chapter" or "Chapter - Major heading" into the existing blank
+    top margin of every page that has one (cover/Contents pages are left
+    alone — nothing to show yet). One small reportlab-rendered overlay page
+    per PDF page, merged onto the original with pypdf."""
+    reader = pypdf.PdfReader(BytesIO(pdf_bytes))
+    writer = pypdf.PdfWriter()
+    color = HexColor(p.get("muted", "#666666"))
+
+    for i, page in enumerate(reader.pages):
+        chapter, major = headers.get(i, (None, None))
+        if chapter:
+            text = f"{chapter} - {major}" if major else chapter
+            page_w, page_h = float(page.mediabox.width), float(page.mediabox.height)
+            buf = BytesIO()
+            c = _rl_canvas.Canvas(buf, pagesize=(page_w, page_h))
+            c.setFont("Helvetica", 8.5)
+            c.setFillColor(color)
+            # .content's own top/side padding is 14mm/17mm — this sits inside
+            # that existing blank margin, never touching the real content.
+            c.drawString(17 * mm, page_h - 10 * mm, text)
+            c.save()
+            buf.seek(0)
+            page.merge_page(pypdf.PdfReader(buf).pages[0])
+        writer.add_page(page)
+
+    out = BytesIO()
+    writer.write(out)
+    return out.getvalue()
+
+
+def book_to_pdf(book: dict, palette_name: str | None, base_url: str, exclude_ids: set | None = None,
+                lite: bool = False) -> bytes:
     engine = pdf_engine()
     if engine == "browser":
         url = (
@@ -378,8 +534,30 @@ def book_to_pdf(book: dict, palette_name: str | None, base_url: str, exclude_ids
         )
         if exclude_ids:
             url += f"&exclude={quote(','.join(exclude_ids))}"
-        return pdfgen.url_to_pdf(url)
+        pdf = pdfgen.url_to_pdf(url)
+        try:
+            chapters, majors = _major_heading_titles(book.get("nodes") or [], exclude_ids or set())
+            headers = _running_headers(pdf, chapters, majors)
+            pdf = _stamp_running_headers(pdf, headers, palettes.get(palette_name))
+        except Exception:
+            pass   # a running header is a nice-to-have — never let it break the export itself
+        if lite:
+            # A separate, independent post-process applied last regardless of
+            # whether header stamping above succeeded — keeps the two features
+            # from interacting (image XObjects are untouched by the header
+            # overlay, which is drawn text/vector, not a raster).
+            try:
+                pdf = compress.compress_pdf_images(pdf)
+            except Exception:
+                pass   # Lite is a size optimisation — never let it break the export itself
+        return pdf
     if engine == "weasyprint":
         html_doc = book_to_html(book, palette_name, exclude_ids)
-        return _load_weasyprint()(string=html_doc, base_url=base_url).write_pdf()
+        pdf = _load_weasyprint()(string=html_doc, base_url=base_url).write_pdf()
+        if lite:
+            try:
+                pdf = compress.compress_pdf_images(pdf)
+            except Exception:
+                pass
+        return pdf
     raise RuntimeError(pdf_error())

@@ -179,6 +179,7 @@ def delete_book(book_id: str) -> bool:
     if existed:
         p.unlink()
     shutil.rmtree(config.BOOKS_DIR / "assets" / book_id, ignore_errors=True)
+    (config.BOOKS_DIR / f"{book_id}.usedimages.json").unlink(missing_ok=True)
     return existed
 
 

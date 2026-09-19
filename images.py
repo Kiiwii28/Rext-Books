@@ -7,6 +7,7 @@ from section Markdown as ``/assets/<book_id>/<uuid>.<ext>``.
 from __future__ import annotations
 
 import base64
+import json
 import re
 import sys
 import time
@@ -163,6 +164,24 @@ def search_wikimedia(query: str, limit: int = 12) -> list[dict]:
     return out
 
 
+def _record_pexels_usage(resp: requests.Response) -> None:
+    """Pexels has no usage dashboard of its own — the X-Ratelimit-* response
+    headers on every call are the only place quota is ever visible, so stash
+    them (persisted) on every real request, success or not: a 429 still
+    carries these headers, and that's actually the most useful moment to
+    capture them."""
+    h = resp.headers
+    if "X-Ratelimit-Limit" not in h and "x-ratelimit-limit" not in h:
+        return
+    try:
+        limit = int(h.get("X-Ratelimit-Limit"))
+        remaining = int(h.get("X-Ratelimit-Remaining"))
+        reset = int(h.get("X-Ratelimit-Reset"))
+    except (TypeError, ValueError):
+        return
+    config.set_pexels_usage(limit, remaining, reset)
+
+
 def search_pexels(query: str, limit: int = 12) -> list[dict]:
     query = (query or "").strip()
     key = config.get_pexels_key()
@@ -175,6 +194,7 @@ def search_pexels(query: str, limit: int = 12) -> list[dict]:
             headers={"Authorization": key},
             timeout=_SEARCH_TIMEOUT,
         )
+        _record_pexels_usage(resp)
         resp.raise_for_status()
         photos = resp.json().get("photos") or []
     except (requests.RequestException, ValueError):
@@ -253,6 +273,42 @@ def fetch_remote(url: str, *, retries: int = 1) -> bytes | None:
 _PLACEHOLDER_RE = re.compile(r"```image-search\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
 _FIELD_RE = re.compile(r"^\s*(query|caption)\s*:\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
 MAX_RESOLVED_IMAGES = 8   # matches the "up to about eight" DEFAULT in prompts.py
+
+
+# --------------------------------------------------------------------------- #
+#  Per-book "already used" image tracking — DeepSeek doesn't remember what it  #
+#  picked for an earlier section, so left alone it can (and does) pick the     #
+#  exact same photo more than once in one book. A sidecar file, not a field   #
+#  on the book itself: the browser autosaves the FULL book JSON on its own    #
+#  schedule from whatever it last fetched, which would silently clobber a     #
+#  field written here mid-request the next time that autosave lands.          #
+# --------------------------------------------------------------------------- #
+
+def _used_images_path(book_id: str):
+    return config.BOOKS_DIR / f"{book_id}.usedimages.json"
+
+
+def _load_used_images(book_id: str) -> set[str]:
+    try:
+        data = json.loads(_used_images_path(book_id).read_text(encoding="utf-8"))
+        return set(data.get("pageUrls") or [])
+    except (OSError, ValueError):
+        return set()
+
+
+def _save_used_images(book_id: str, urls: set[str]) -> None:
+    try:
+        _used_images_path(book_id).write_text(
+            json.dumps({"pageUrls": sorted(urls)}, indent=2), encoding="utf-8")
+    except OSError as exc:
+        _log(f"could not persist used-images list for book {book_id!r}: {exc!r}")
+
+
+def _image_key(candidate: dict) -> str | None:
+    """A stable per-photo identifier — the page URL, not the (possibly
+    resolution-specific) direct image URL — so the same photo at a different
+    size still counts as a repeat."""
+    return candidate.get("pageUrl") or candidate.get("fullUrl") or None
 
 
 def _parse_placeholder(body: str) -> tuple[str, str]:
@@ -400,10 +456,20 @@ def resolve_image_placeholders(text: str, book_id: str, *, source: str = "auto")
     among the actual results — or drop it silently if nothing usable turns up.
     Never raises: a failure resolving any one placeholder just drops that one,
     so a flaky search/download/chooser call can't break the whole response.
+
+    A photo already used elsewhere in this book is filtered out of the
+    candidate list before the chooser ever sees it — DeepSeek has no memory
+    of what it picked for an earlier section, so left alone it happily reuses
+    the same photo three times in one book (observed). See the "used image
+    tracking" section above for why this is a sidecar file, not a book field.
+
     Returns (new_text, resolved_count, placeholder_count)."""
     matches = list(_PLACEHOLDER_RE.finditer(text))
     if not matches:
         return text, 0, 0
+
+    used = _load_used_images(book_id)
+    used_before = frozenset(used)
 
     out: list[str] = []
     last_end = 0
@@ -419,25 +485,30 @@ def resolve_image_placeholders(text: str, book_id: str, *, source: str = "auto")
             else:
                 try:
                     candidates = search_images(query, limit=6, source=source)["results"]
+                    fresh = [c for c in candidates if _image_key(c) not in used]
                     if not candidates:
                         _log(f"zero search results for query={query!r}")
-                    idx = _choose_candidate(caption or query, candidates)
+                    elif not fresh:
+                        _log(f"all {len(candidates)} candidate(s) for query={query!r} already used elsewhere in this book")
+                    idx = _choose_candidate(caption or query, fresh)
                     if idx is None:
                         # Retry with a genuinely different query rather than
                         # re-judging the same (evidently wrong-domain, or
-                        # empty) results again — see _suggest_alternative_query.
+                        # empty, or already-used) results again — see
+                        # _suggest_alternative_query.
                         alt_query = _suggest_alternative_query(
-                            query, caption or query, [c["title"] for c in candidates])
+                            query, caption or query, [c["title"] for c in fresh or candidates])
                         if alt_query:
                             _log(f"retrying search: query={query!r} -> {alt_query!r}")
                             alt_candidates = search_images(alt_query, limit=6, source=source)["results"]
-                            alt_idx = _choose_candidate(caption or query, alt_candidates)
+                            alt_fresh = [c for c in alt_candidates if _image_key(c) not in used]
+                            alt_idx = _choose_candidate(caption or query, alt_fresh)
                             if alt_idx is not None:
-                                query, candidates, idx = alt_query, alt_candidates, alt_idx
+                                query, fresh, idx = alt_query, alt_fresh, alt_idx
                     if idx is None:
                         _log(f"no image used for query={query!r} ({len(candidates)} candidate(s) offered)")
                     if idx is not None:
-                        chosen = candidates[idx]
+                        chosen = fresh[idx]
                         fetched = fetch_remote(chosen["fullUrl"])
                         if not fetched:
                             _log(f"fetch_remote failed for chosen candidate: {chosen['fullUrl']!r}")
@@ -446,6 +517,9 @@ def resolve_image_placeholders(text: str, book_id: str, *, source: str = "auto")
                             alt = (caption or query).replace("[", "").replace("]", "")
                             replacement = f"![{alt}]({saved['url']})\n*{chosen['attribution']}*"
                             resolved += 1
+                            key = _image_key(chosen)
+                            if key:
+                                used.add(key)
                 except Exception as exc:
                     import traceback
                     _log(f"unhandled exception resolving query={query!r}: {exc!r}")
@@ -453,4 +527,6 @@ def resolve_image_placeholders(text: str, book_id: str, *, source: str = "auto")
                     replacement = ""
         out.append(replacement)
     out.append(text[last_end:])
+    if used != used_before:
+        _save_used_images(book_id, used)
     return "".join(out), resolved, len(matches)

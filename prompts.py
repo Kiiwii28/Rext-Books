@@ -293,10 +293,21 @@ _CONTEXT_PREAMBLE = (
     "stay within the scope of your assigned task.\n\n"
 )
 
+_OUTLINE_PREAMBLE = (
+    "Below is the book's outline (titles only, no body text) so you can see how the "
+    "whole book is structured and where your assigned subsection sits within it — "
+    "which chapter it belongs to, and what comes before and after it. If any extra "
+    "context was picked, its place in the outline is flagged too. Use this only to "
+    "keep a sensible progression, consistent terminology, and to avoid overlapping "
+    "what nearby sections already cover — do NOT restate this outline, and do not "
+    "write content for any node other than the one you were assigned.\n\n"
+)
+
 
 def build_messages(mode: str, user_prompt: str, *, tone: str | None = None,
                    depth: str | None = None, refine_source: str | None = None,
                    context_blocks: list[str] | None = None,
+                   book_outline: str | None = None,
                    overarching: str | None = None,
                    use_images: bool = False,
                    image_frequency: str = "Medium", diagram_frequency: str = "Medium",
@@ -352,6 +363,8 @@ def build_messages(mode: str, user_prompt: str, *, tone: str | None = None,
     parts.append(OVERRIDE_NOTE)
 
     messages = [{"role": "system", "content": "\n\n".join(parts)}]
+    if book_outline and book_outline.strip():
+        messages.append({"role": "user", "content": _OUTLINE_PREAMBLE + book_outline.strip()})
     if context_blocks:
         joined = "\n\n----------\n\n".join(b.strip() for b in context_blocks if b.strip())
         if joined:

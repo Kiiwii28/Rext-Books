@@ -86,14 +86,20 @@ function withExclude(url, excludeIds) {
   return url + sep + "exclude=" + encodeURIComponent(excludeIds.join(","));
 }
 
-export const exportHref = (bookId, fmt, palette, excludeIds) =>
-  withExclude(
+/** `lite` only ever applies to pdf/epub — the print fallback (see printHref)
+ *  goes through the browser's own print dialog, so there's no export bytes
+ *  on the server side for it to compress. */
+export const exportHref = (bookId, fmt, palette, excludeIds, lite) => {
+  let url = withExclude(
     fmt === "md" ? `/api/books/${bookId}/export.md`
     : fmt === "json" ? `/api/books/${bookId}/export.json`
     : fmt === "epub" ? `/api/books/${bookId}/export.epub`
     : `/api/books/${bookId}/export.pdf?palette=${encodeURIComponent(palette || "")}`,
     excludeIds,
   );
+  if (lite && (fmt === "pdf" || fmt === "epub")) url += (url.includes("?") ? "&" : "?") + "lite=1";
+  return url;
+};
 
 export const printHref = (bookId, palette, excludeIds) =>
   withExclude(`/api/books/${bookId}/preview?print=1&palette=${encodeURIComponent(palette || "")}`, excludeIds);

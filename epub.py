@@ -28,6 +28,7 @@ from urllib.parse import urljoin
 import requests
 from werkzeug.utils import secure_filename
 
+import compress
 import config
 import export as _export
 import palettes
@@ -83,9 +84,11 @@ class _AssetBag:
     the epub-relative path to use in its place."""
 
     _EXTS = {"png", "jpg", "jpeg", "gif", "svg", "webp"}
+    _COMPRESSIBLE = {"png", "jpg", "jpeg"}
 
-    def __init__(self, base_url: str):
+    def __init__(self, base_url: str, lite: bool = False):
         self.base_url = base_url
+        self.lite = lite
         self.by_src: dict[str, str | None] = {}
         self.files: dict[str, bytes] = {}
         self.media_types: dict[str, str] = {}
@@ -99,6 +102,8 @@ class _AssetBag:
             self.by_src[src] = None
             return None
         body, ext = got
+        if self.lite and ext in self._COMPRESSIBLE:
+            body = compress.shrink_image_bytes(body)
         name = self.add_bytes(body, ext)
         self.by_src[src] = name
         return name
@@ -150,8 +155,24 @@ def _force_svg_size(svg: str, w: float, h: float) -> str:
 _GAP = 12            # px between stacked diagrams in one batch screenshot
 _MAX_BATCH_HEIGHT = 6000   # keeps each individual headless-Chrome screenshot modest
 
+# Mermaid's own viewBox height doesn't reliably match how tall a diagram
+# actually paints — a 7-node flowchart with plain text labels was observed
+# reporting a viewBox roughly 40% of its real rendered height (its
+# foreignObject-based labels lay out taller than Mermaid's own layout pass
+# accounted for), silently clipping every node's label when a batch slot was
+# sized to the declared height. Each diagram now gets a deliberately
+# oversized, non-clipping slot to render into; the real crop is found
+# afterwards from the actual painted (non-transparent) pixels, never from
+# the declared size.
+_HEIGHT_SAFETY = 2.2
+_HEIGHT_PAD = 40
 
-def _rasterize_all_mermaid(chapter_html: list[str], bag: "_AssetBag") -> list[str]:
+
+def _reserved_height(h: float, scale: float) -> float:
+    return h * scale * _HEIGHT_SAFETY + _HEIGHT_PAD
+
+
+def _rasterize_all_mermaid(chapter_html: list[str], bag: "_AssetBag", lite: bool = False) -> list[str]:
     """Replace every pre-rendered (but still live-SVG) Mermaid figure across
     every chapter with a rasterized PNG.
 
@@ -165,7 +186,12 @@ def _rasterize_all_mermaid(chapter_html: list[str], bag: "_AssetBag") -> list[st
     diagram would take minutes, so instead every diagram this finds gets
     stacked into a handful of tall pages (capped in height so each screenshot
     stays quick), each page screenshotted once and cropped apart with Pillow.
+
+    ``lite`` renders at a lower pixel scale (still sharp, just not 2x) and
+    PNG-optimizes the crop — diagrams are flat colour + text, so this is a
+    real size win with no visible quality loss.
     """
+    scale = compress.DIAGRAM_SHOT_SCALE if lite else _MERMAID_SHOT_SCALE
     entries: list[dict] = []
     for ci, html in enumerate(chapter_html):
         for m in _MERMAID_FIGURE.finditer(html):
@@ -185,14 +211,14 @@ def _rasterize_all_mermaid(chapter_html: list[str], bag: "_AssetBag") -> list[st
     batch: list[dict] = []
     batch_h = 0.0
     for e in entries:
-        eh = e["h"] * _MERMAID_SHOT_SCALE + _GAP
+        eh = _reserved_height(e["h"], scale) + _GAP
         if batch and batch_h + eh > _MAX_BATCH_HEIGHT:
-            _rasterize_batch(batch, bag)
+            _rasterize_batch(batch, bag, scale, lite)
             batch, batch_h = [], 0.0
         batch.append(e)
         batch_h += eh
     if batch:
-        _rasterize_batch(batch, bag)
+        _rasterize_batch(batch, bag, scale, lite)
 
     by_chapter: dict[int, list[dict]] = {}
     for e in entries:
@@ -206,9 +232,16 @@ def _rasterize_all_mermaid(chapter_html: list[str], bag: "_AssetBag") -> list[st
             e = next(_it)
             if "asset" not in e:
                 return m.group(0)
+            # Display size in CSS pixels — the actual cropped-to-content raster
+            # (out_w/out_h, set in _rasterize_batch) can be taller than the
+            # declared viewBox height, so use it, not e["w"]/e["h"], or the
+            # <img> tag would tell the reader to squash the real pixels back
+            # down to the (wrong) size Mermaid originally reported.
+            w = e.get("out_w", e["w"] * scale) / scale
+            h = e.get("out_h", e["h"] * scale) / scale
             return (
                 '<figure class="mermaid-figure">'
-                f'<img src="{e["asset"]}" alt="Diagram" width="{int(e["w"])}" height="{int(e["h"])}"/>'
+                f'<img src="{e["asset"]}" alt="Diagram" width="{int(w)}" height="{int(h)}"/>'
                 "</figure>"
             )
 
@@ -216,23 +249,33 @@ def _rasterize_all_mermaid(chapter_html: list[str], bag: "_AssetBag") -> list[st
     return out
 
 
-def _rasterize_batch(group: list[dict], bag: "_AssetBag") -> None:
+def _rasterize_batch(group: list[dict], bag: "_AssetBag", scale: float, optimize: bool = False) -> None:
     """Stack every diagram in `group` into one tall page, screenshot it once,
-    and crop each diagram back out with Pillow — sets `e["asset"]` in place."""
+    and crop each diagram back out with Pillow — sets `e["asset"]` (and the
+    actual raster's `e["out_w"]`/`e["out_h"]`) in place.
+
+    Each diagram renders into a deliberately oversized, non-clipping slot
+    (overflow: visible, height padded well beyond the declared viewBox —
+    see _reserved_height) rather than one sized exactly to Mermaid's
+    self-reported dimensions, which understates real content height often
+    enough to matter. The real crop is then the actual painted (non-
+    transparent) pixels within that slot, found via Pillow's getbbox() —
+    trusting what was actually drawn, not what Mermaid claimed it would be."""
     y = 0.0
     max_w = 0.0
     divs = []
-    positions = []
+    slots = []
     for e in group:
-        sw, sh = e["w"] * _MERMAID_SHOT_SCALE, e["h"] * _MERMAID_SHOT_SCALE
+        sw, sh = e["w"] * scale, e["h"] * scale
+        reserved_h = _reserved_height(e["h"], scale)
         sized_svg = _force_svg_size(e["svg"], sw, sh)
         divs.append(
             f'<div style="position:absolute;left:0;top:{y:.1f}px;'
-            f'width:{sw:.1f}px;height:{sh:.1f}px;overflow:hidden;">{sized_svg}</div>'
+            f'width:{sw:.1f}px;height:{reserved_h:.1f}px;overflow:visible;">{sized_svg}</div>'
         )
-        positions.append((y, sw, sh))
+        slots.append((y, sw, reserved_h))
         max_w = max(max_w, sw)
-        y += sh + _GAP
+        y += reserved_h + _GAP
     total_h = y
 
     html = (
@@ -246,11 +289,14 @@ def _rasterize_batch(group: list[dict], bag: "_AssetBag") -> None:
     except Exception:
         return   # every entry in this batch simply stays as inline SVG
 
-    for e, (y0, sw, sh) in zip(group, positions):
-        crop = sheet.crop((0, int(y0), int(sw), int(y0 + sh)))
+    for e, (y0, sw, reserved_h) in zip(group, slots):
+        slot = sheet.crop((0, int(y0), min(sheet.width, int(sw) + 8), int(y0 + reserved_h)))
+        bbox = slot.getbbox()
+        crop = slot.crop(bbox) if bbox else slot
         buf = BytesIO()
-        crop.save(buf, format="PNG")
+        crop.save(buf, format="PNG", optimize=optimize)
         e["asset"] = bag.add_bytes(buf.getvalue(), "png")
+        e["out_w"], e["out_h"] = crop.size
 
 
 def _rewrite_images(fragment: str, bag: "_AssetBag") -> str:
@@ -339,6 +385,9 @@ p {{ margin: 0 0 1em; }}
 a {{ color: {p['accent']}; }}
 strong {{ color: {p['heading']}; }}
 img {{ max-width: 100%; height: auto; }}
+.img-figure {{ margin: 1.2em 0; text-align: center; break-inside: avoid; page-break-inside: avoid; }}
+.img-figure img {{ margin: 0 auto; }}
+.img-figure figcaption {{ font-size: .82em; font-style: italic; color: {p['muted']}; margin-top: .4em; }}
 ul, ol {{ padding-left: 1.3em; }}
 li {{ margin: .3em 0; }}
 pre, code {{ font-family: 'SF Mono', Consolas, 'Roboto Mono', monospace;
@@ -460,7 +509,8 @@ def _content_opf(book_uuid: str, title: str, author: str, topic: str,
 </package>"""
 
 
-def book_to_epub(book: dict, palette_name: str | None, base_url: str, exclude_ids: set | None = None) -> bytes:
+def book_to_epub(book: dict, palette_name: str | None, base_url: str, exclude_ids: set | None = None,
+                 lite: bool = False) -> bytes:
     exclude_ids = exclude_ids or set()
     p = palettes.get(palette_name)
     nodes = _export.filter_book_nodes(book.get("nodes") or [], exclude_ids)
@@ -496,7 +546,7 @@ def book_to_epub(book: dict, palette_name: str | None, base_url: str, exclude_id
     author = config.get_author()
     book_uuid = f"urn:uuid:{book.get('id') or uuid.uuid4().hex}"
 
-    bag = _AssetBag(base_url)
+    bag = _AssetBag(base_url, lite=lite)
     manifest_items: list[tuple[str, str, str]] = []
     spine_ids: list[str] = []
 
@@ -507,10 +557,14 @@ def book_to_epub(book: dict, palette_name: str | None, base_url: str, exclude_id
     # placeholder. Mermaid runs last, batched, since a book can easily have
     # 100+ diagrams and a Chrome launch per diagram would take minutes.
     chapter_html = [_rewrite_images(h, bag) for h in chapter_html]
-    chapter_html = _rasterize_all_mermaid(chapter_html, bag)
+    chapter_html = _rasterize_all_mermaid(chapter_html, bag, lite=lite)
 
     zbuf = BytesIO()
-    with zipfile.ZipFile(zbuf, "w", zipfile.ZIP_DEFLATED) as z:
+    # Lite mode maxes out the (lossless) deflate level — a small free win on
+    # top of the image/diagram compression above, mostly shrinking the
+    # HTML/CSS/XML text; default mode is left at Python's normal level so an
+    # ordinary export's bytes don't change at all.
+    with zipfile.ZipFile(zbuf, "w", zipfile.ZIP_DEFLATED, compresslevel=9 if lite else None) as z:
         z.writestr(zipfile.ZipInfo("mimetype"), "application/epub+zip", zipfile.ZIP_STORED)
         z.writestr("META-INF/container.xml", _CONTAINER_XML)
         z.writestr("OEBPS/style.css", _epub_css(p))

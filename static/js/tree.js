@@ -76,14 +76,29 @@ export function renderTree(state) {
 }
 
 function renderNode(node, selectedId, ctx, parentId = null) {
-  const picked = ctx.picked.has(node.id);
+  // A bulk "container" (see store.isBulkContainer) stands in for its whole
+  // set of children — its own checkbox reflects how many of them are picked
+  // rather than whether the container itself is in the bulk queue.
+  const isContainer = ctx.mode === "bulk" && store.isBulkContainer(node);
+  const kidIds = isContainer ? (node.children || []).map((c) => c.id) : null;
+  const kidsPicked = isContainer ? kidIds.filter((id) => ctx.picked.has(id)).length : 0;
+
+  const picked = isContainer ? kidIds.length > 0 && kidsPicked === kidIds.length
+    : ctx.picked.has(node.id);
+  const indeterminate = isContainer && kidsPicked > 0 && kidsPicked < kidIds.length;
 
   let disabled = false;
   if (ctx.mode === "context") disabled = node.id === ctx.target;
   else if (ctx.mode === "spark") disabled = ctx.full && !picked;
   else if (ctx.mode === "bulk") {
-    disabled = ctx.bulkLocked && !picked &&
-      (node.type !== ctx.bulkType || (parentId ?? null) !== (ctx.bulkParent ?? null));
+    if (isContainer) {
+      const kidType = node.children?.[0]?.type;
+      disabled = ctx.bulkLocked && !picked && !indeterminate &&
+        (kidType !== ctx.bulkType || node.id !== ctx.bulkParent);
+    } else {
+      disabled = ctx.bulkLocked && !picked &&
+        (node.type !== ctx.bulkType || (parentId ?? null) !== (ctx.bulkParent ?? null));
+    }
   }
 
   const block = createBlock(node, {
@@ -93,6 +108,7 @@ function renderNode(node, selectedId, ctx, parentId = null) {
       mode: ctx.mode,
       pick: true,
       picked,
+      indeterminate,
       isTarget: node.id === ctx.target,
       disabled,
       toggle: (id) =>

@@ -31,7 +31,7 @@ export async function mountSettings(refs) {
     try {
       await saveSettings({ pexelsApiKey: "" });
       setInline("Pexels key removed.", "ok");
-      await refreshBadge();
+      paintPexelsUsage(await refreshBadge());
     } catch (err) {
       setInline(String(err.message || err), "err");
     }
@@ -74,9 +74,40 @@ async function open(prefetched) {
   els.pexelsInput.type = "password";
   els.pexelsToggle.textContent = "👁";
   els.pexelsInput.placeholder = s.hasPexelsKey ? "•••••••••••••• (saved — leave blank to keep)" : "Paste a Pexels API key…";
+  paintPexelsUsage(s);
   setInline("");
   els.backdrop.hidden = false;
   els.keyInput.focus();
+}
+
+/** Pexels has no usage dashboard of its own — the only place this is ever
+ *  visible is the response headers on each search call, which images.py
+ *  records (config.py) every time it actually calls Pexels. Shows the
+ *  last-known snapshot; nothing to show until a search has happened at
+ *  least once. */
+function paintPexelsUsage(s) {
+  const u = s.pexelsUsage;
+  if (!u || u.remaining == null || u.limit == null) { els.pexelsUsage.hidden = true; return; }
+  const pct = u.limit ? Math.round((u.remaining / u.limit) * 100) : null;
+  const resetIn = u.reset ? formatDuration(u.reset * 1000 - Date.now()) : null;
+  const checkedAgo = u.checkedAt ? formatDuration(Date.now() - u.checkedAt * 1000) : null;
+  els.pexelsUsage.textContent =
+    `Usage: ${u.remaining.toLocaleString()} / ${u.limit.toLocaleString()} requests remaining` +
+    (pct != null ? ` (${pct}%)` : "") +
+    (resetIn ? ` · resets in ${resetIn}` : "") +
+    (checkedAgo ? ` · as of ${checkedAgo} ago` : "");
+  els.pexelsUsage.hidden = false;
+}
+
+function formatDuration(ms) {
+  if (ms == null || !Number.isFinite(ms)) return null;
+  const mins = Math.round(Math.abs(ms) / 60000);
+  if (mins < 1) return "under a minute";
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  if (h < 48) return h > 0 ? `${h}h ${m}m` : `${m}m`;
+  const d = Math.floor(h / 24);
+  return `${d}d ${h % 24}h`;
 }
 
 function close() { els.backdrop.hidden = true; }
@@ -126,7 +157,9 @@ async function onSave() {
     els.keyInput.value = "";
     els.pexelsInput.value = "";
     setInline("Saved ✓", "ok");
-    paintStatus(await refreshBadge());
+    const s = await refreshBadge();
+    paintStatus(s);
+    paintPexelsUsage(s);
   } catch (err) {
     setInline(String(err.message || err), "err");
   } finally {

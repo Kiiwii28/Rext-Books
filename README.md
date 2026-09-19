@@ -90,6 +90,12 @@ Open <http://127.0.0.1:5000>.
   and you can tick the very blocks being bulk-generated as context for one
   another — e.g. queue A, B, C and also tick A–D as context, and each of A, B, C
   is generated seeing the *other* three (itself is always excluded automatically).
+  Ticking a heading (or a subheading whose children are further subheadings,
+  not content) is a shortcut for ticking every one of its children at once —
+  still just the one level below it, still all the same kind — instead of
+  ticking each by hand. A subheading that already holds its own content still
+  ticks itself, so bulk-regenerating several already-written sections works
+  exactly as before.
 - **Spark (`⚡`)** — cross-breed two blocks. Click **⚡ Spark**, pick exactly two
   blocks, then choose one of ten modes (Cross-Pollinate, Unified Theory, Contrarian,
   Socratic Questioning, Temporal Dimension, Scale Shifting, Metaphor Mapping, Missing

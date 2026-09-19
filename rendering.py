@@ -37,6 +37,24 @@ _PLACEHOLDER_HOSTS = (
 
 _IMG_TAG = re.compile(r"<img\b[^>]*>", re.IGNORECASE)
 
+# A lone image (optionally with a caption/attribution line right after it, no
+# blank line between — the search-and-insert flow writes exactly this:
+# "![alt](url)\n*attribution*") renders as ONE <p> holding both. Chrome's
+# print engine doesn't reliably honour break-inside:avoid on a bare <img> (a
+# replaced element) when it comes to page pagination — the image can still
+# split across a page boundary. A block-level wrapper is respected reliably,
+# so this promotes any single-image-only paragraph into a proper <figure>,
+# with the caption line (if any) as a real <figcaption>.
+_IMG_ONLY_P = re.compile(
+    r"<p>\s*(<img\b[^>]*>)\s*(?:<em>(.*?)</em>)?\s*</p>", re.IGNORECASE | re.DOTALL,
+)
+
+
+def _wrap_image_figure(m: re.Match) -> str:
+    img_tag, caption = m.group(1), m.group(2)
+    inner = img_tag + (f"<figcaption>{caption}</figcaption>" if caption else "")
+    return f'<figure class="img-figure">{inner}</figure>'
+
 
 def _attr(tag: str, name: str) -> str:
     m = re.search(rf'{name}="([^"]*)"', tag, re.IGNORECASE)
@@ -77,4 +95,5 @@ def render_markdown(text: str) -> str:
         html,
     )
     html = _IMG_TAG.sub(lambda m: _fix_image(m.group(0)), html)
+    html = _IMG_ONLY_P.sub(_wrap_image_figure, html)
     return html

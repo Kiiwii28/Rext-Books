@@ -228,6 +228,13 @@
           <div id="palette-grid" class="palette-grid"></div>
         </div>
 
+        <div class="field" id="lite-field">
+          <label class="ai-count-row" id="export-lite-row">
+            <span>📦 Lite export <span class="hint">(smaller file — shrinks images &amp; diagrams)</span></span>
+            <input id="export-lite" type="checkbox">
+          </label>
+        </div>
+
         <div class="field">
           <button type="button" id="export-content-toggle" class="export-content-toggle" aria-expanded="false">
             <span class="ect-toggle-chevron">▸</span>
@@ -335,6 +342,7 @@
             with no key at all — this only adds a second source for general photography.
             <button type="button" id="settings-pexels-clear" class="mini-link">Clear</button>
           </p>
+          <p id="settings-pexels-usage" class="export-note" hidden></p>
         </div>
 
         <p class="export-note">Model in use: <code id="settings-model"></code></p>
