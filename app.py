@@ -270,6 +270,14 @@ def _parse_lite() -> bool:
     return request.args.get("lite", "") in ("1", "true", "on")
 
 
+def _parse_numbered() -> bool:
+    """The Pages export's "Number headings" toggle — prefixes every note's
+    title/filename with its outline position (hyphen-separated, e.g. "1-2",
+    since a "." in a filename is asking for trouble) so a static host that
+    loses the outline's own ordering still sorts notes correctly."""
+    return request.args.get("number", "") in ("1", "true", "on")
+
+
 @app.get("/api/books/<book_id>/export.json")
 def export_json(book_id: str):
     book = store.get_book(book_id)
@@ -349,7 +357,7 @@ def export_pages(book_id: str):
         return jsonify({"error": "not found"}), 404
     try:
         data = pages.book_to_pages(book, base_url=request.url_root, exclude_ids=_parse_exclude(),
-                                   lite=_parse_lite())
+                                   lite=_parse_lite(), numbered=_parse_numbered())
     except subprocess.TimeoutExpired:
         return jsonify({
             "error": "Pages export timed out — this book may be too large or image-heavy for "

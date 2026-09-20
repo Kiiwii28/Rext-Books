@@ -11,6 +11,23 @@ From 2026-09-20 onward, entries are logged at the time each change is made.
 
 ## 2026-09-20
 
+**13:45 SAST** — Added an optional **"Number headings" toggle** to the Pages
+export (`pages.py`, `app.py`'s `_parse_numbered`, and the matching checkbox
+in the Export dialog): prefixes every note's title *and* filename/foldername
+with its outline position — "1", "1-1", "1-2", "2-1"... — using a hyphen
+rather than the conventional dot, since a "." in a filename is a real risk
+on some filesystems/tools. This exists because a static host (GitHub Pages
+via an Obsidian export, specifically) generally loses the outline's actual
+ordering and falls back to sorting notes alphabetically; a numeric prefix
+makes that fallback sort land correctly instead of scrambled. Numbers are
+zero-padded to whatever width each level actually needs (e.g. "01".."12"
+for 12 siblings) — caught and fixed this myself before shipping, since a
+bare "1".."12" sorts "10" before "2" alphabetically, which would have
+silently reintroduced the exact ordering bug the feature exists to fix.
+Verified against both a small book (stays unpadded: "1", "2") and a
+12-chapter book (pads to "01".."12", confirmed alphabetical-sort order
+matches outline order) on both the dev server and the portable build.
+
 **13:20 SAST** — Added a **"Pages" export mode**: a new `pages.py` module
 producing a `.zip` of Markdown notes mirroring the book's outline, shaped
 for dropping straight into an Obsidian vault. Each container level (a

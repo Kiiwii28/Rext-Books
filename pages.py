@@ -75,16 +75,33 @@ class _Node:
         self.children: list["_Node"] = []
 
 
-def _build_tree(nodes: list[dict], dir_path: str) -> list["_Node"]:
+def _build_tree(nodes: list[dict], dir_path: str, numbered: bool = False,
+                num_prefix: str = "") -> list["_Node"]:
     """First pass: decide every node's final vault path with no content
     written yet, so a note can link to a sibling/child whose path is
-    already settled by the time content actually gets written."""
+    already settled by the time content actually gets written.
+
+    ``numbered`` prefixes every heading/subheading's title (and therefore
+    its file/folder name) with its outline position — "1", "1-1", "1-2",
+    "2-1", ... — a hyphen rather than the conventional "1.1" dot, since a
+    "." in a folder/file name is asking for trouble on some filesystems and
+    tools. This exists because a static host (e.g. GitHub Pages via an
+    Obsidian export) generally loses the outline's own ordering and falls
+    back to sorting notes alphabetically — a numeric prefix makes that
+    fallback sort correct instead of scrambled.
+    """
     used_lower: set[str] = set()
+    struct_nodes = [c for c in nodes if c.get("type") != "section"]
+    # Zero-padded to the width this level actually needs (e.g. "01".."12" for
+    # 12 siblings) — a bare "1".."12" would sort "10" before "2" alphabetically,
+    # which is exactly the failure mode this numbering exists to avoid.
+    width = len(str(len(struct_nodes)))
     out = []
-    for n in nodes:
-        if n.get("type") == "section":
-            continue   # carried as the parent's own `.section`, not its own node
-        title = n.get("title") or "Untitled"
+    for i, n in enumerate(struct_nodes, start=1):
+        raw_title = n.get("title") or "Untitled"
+        idx = f"{i:0{width}d}"
+        num = idx if not num_prefix else f"{num_prefix}-{idx}"
+        title = f"{num} {raw_title}" if numbered else raw_title
         name = _safe_name(title, used_lower)
         struct_children = [c for c in n.get("children") or [] if c.get("type") != "section"]
         section = next((c for c in n.get("children") or [] if c.get("type") == "section"), None)
@@ -92,7 +109,7 @@ def _build_tree(nodes: list[dict], dir_path: str) -> list["_Node"]:
             sub_dir = f"{dir_path}/{name}"
             node = _Node(n["id"], title, f"{sub_dir}/{name}")
             node.section = section
-            node.children = _build_tree(struct_children, sub_dir)
+            node.children = _build_tree(struct_children, sub_dir, numbered, num)
         else:
             node = _Node(n["id"], title, f"{dir_path}/{name}")
             node.section = section
@@ -116,13 +133,13 @@ def _write_notes(tree_nodes: list["_Node"], parent: "_Node", bag: _AssetBag,
 
 
 def book_to_pages(book: dict, base_url: str, exclude_ids: set | None = None,
-                  lite: bool = False) -> bytes:
+                  lite: bool = False, numbered: bool = False) -> bytes:
     nodes = _export.filter_book_nodes(book.get("nodes") or [], exclude_ids or set())
     title = (book.get("title") or "Untitled").strip()
     root_name = _safe_name(title, set())
 
     bag = _AssetBag(base_url, lite=lite)
-    tree = _build_tree(nodes, root_name)
+    tree = _build_tree(nodes, root_name, numbered)
     root = _Node("__root__", title, f"{root_name}/{root_name}")
 
     files: dict[str, str] = {}

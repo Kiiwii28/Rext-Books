@@ -206,6 +206,7 @@ function syncFormat() {
   // render, an EPUB, or a Pages export — the no-native-renderer PDF
   // fallback just opens the browser's own print dialog, nothing to shrink.
   els.liteField.hidden = !(fmt === "epub" || fmt === "pages" || (fmt === "pdf" && pdfNative));
+  els.pagesNumberField.hidden = fmt !== "pages";
   if (fmt === "pdf") {
     els.note.textContent = pdfNative
       ? "A styled PDF will download — cover page, contents, working links, and a bookmarks/navigation pane matching your headings."
@@ -234,6 +235,7 @@ function open() {
   renderContentTree();
   markSelected();
   els.liteCheckbox.checked = false;   // opt-in each time — default export unless asked otherwise
+  els.pagesNumberCheckbox.checked = false;
   syncFormat();
   els.backdrop.hidden = false;
 }
@@ -245,10 +247,11 @@ function go() {
   const palette = store.getSetting("palette");
   const exclude = excludedIds();
   const lite = els.liteCheckbox.checked;
+  const numbered = els.pagesNumberCheckbox.checked;
   if (fmt === "md" || fmt === "json" || fmt === "epub" || fmt === "pages") {
-    window.location.href = exportHref(book.id, fmt, palette, exclude, lite);
+    window.location.href = exportHref(book.id, fmt, palette, exclude, lite, numbered);
   } else if (pdfNative) {
-    window.location.href = exportHref(book.id, "pdf", palette, exclude, lite);
+    window.location.href = exportHref(book.id, "pdf", palette, exclude, lite, numbered);
   } else {
     window.open(printHref(book.id, palette, exclude), "_blank", "noopener");
   }

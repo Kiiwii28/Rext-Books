@@ -88,8 +88,9 @@ function withExclude(url, excludeIds) {
 
 /** `lite` only ever applies to pdf/epub/pages — the print fallback (see
  *  printHref) goes through the browser's own print dialog, so there's no
- *  export bytes on the server side for it to compress. */
-export const exportHref = (bookId, fmt, palette, excludeIds, lite) => {
+ *  export bytes on the server side for it to compress. `numbered` only
+ *  applies to pages. */
+export const exportHref = (bookId, fmt, palette, excludeIds, lite, numbered) => {
   let url = withExclude(
     fmt === "md" ? `/api/books/${bookId}/export.md`
     : fmt === "json" ? `/api/books/${bookId}/export.json`
@@ -101,6 +102,7 @@ export const exportHref = (bookId, fmt, palette, excludeIds, lite) => {
   if (lite && (fmt === "pdf" || fmt === "epub" || fmt === "pages")) {
     url += (url.includes("?") ? "&" : "?") + "lite=1";
   }
+  if (numbered && fmt === "pages") url += (url.includes("?") ? "&" : "?") + "number=1";
   return url;
 };
 

@@ -673,12 +673,13 @@ body.is-resizing-y, body.is-resizing-y * { cursor: ns-resize !important; user-se
 #ai-images-row input[type="checkbox"],
 #ai-summary-row input[type="checkbox"],
 #ai-terms-row input[type="checkbox"],
-#export-lite-row input[type="checkbox"] {
+#export-lite-row input[type="checkbox"],
+#export-pages-number-row input[type="checkbox"] {
   width: auto; padding: 0; accent-color: var(--accent); flex: none;
 }
 #ai-images-row span, #ai-summary-row span, #ai-terms-row span,
-#export-lite-row span { flex: 1; padding-right: 10px; }
-#export-lite-row { cursor: pointer; }
+#export-lite-row span, #export-pages-number-row span { flex: 1; padding-right: 10px; }
+#export-lite-row, #export-pages-number-row { cursor: pointer; }
 
 .ai-prompt-label { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-soft); }
 .ai-prompt-label .hint { color: var(--ink-faint); font-weight: 600; text-transform: none; letter-spacing: 0; }

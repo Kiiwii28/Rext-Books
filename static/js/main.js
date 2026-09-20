@@ -80,6 +80,8 @@ const exportEls = {
   grid: $("palette-grid"),
   liteField: $("lite-field"),
   liteCheckbox: $("export-lite"),
+  pagesNumberField: $("pages-number-field"),
+  pagesNumberCheckbox: $("export-pages-number"),
   note: $("export-note"),
   contentToggle: $("export-content-toggle"),
   contentBody: $("export-content-body"),
