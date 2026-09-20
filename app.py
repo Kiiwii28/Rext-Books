@@ -24,6 +24,7 @@ import deepseek
 import epub
 import export
 import images
+import pages
 import palettes
 import prompts
 import sparks
@@ -338,6 +339,27 @@ def export_epub(book_id: str):
         return jsonify({"error": f"EPUB export failed: {exc}"}), 500
     return Response(data, mimetype="application/epub+zip", headers={
         "Content-Disposition": f'attachment; filename="{_slug(book.get("title"))}.epub"',
+    })
+
+
+@app.get("/api/books/<book_id>/export.pages")
+def export_pages(book_id: str):
+    book = store.get_book(book_id)
+    if book is None:
+        return jsonify({"error": "not found"}), 404
+    try:
+        data = pages.book_to_pages(book, base_url=request.url_root, exclude_ids=_parse_exclude(),
+                                   lite=_parse_lite())
+    except subprocess.TimeoutExpired:
+        return jsonify({
+            "error": "Pages export timed out — this book may be too large or image-heavy for "
+                     "one export pass. Try excluding some content via Export → Content to "
+                     "include, or exporting chapters separately.",
+        }), 504
+    except Exception as exc:
+        return jsonify({"error": f"Pages export failed: {exc}"}), 500
+    return Response(data, mimetype="application/zip", headers={
+        "Content-Disposition": f'attachment; filename="{_slug(book.get("title"))}-pages.zip"',
     })
 
 

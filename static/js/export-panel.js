@@ -203,9 +203,9 @@ function markSelected() {
 function syncFormat() {
   els.paletteField.hidden = fmt !== "pdf" && fmt !== "epub";
   // Lite only actually compresses anything server-side for a native PDF
-  // render or an EPUB — the no-native-renderer PDF fallback just opens the
-  // browser's own print dialog, nothing here to shrink.
-  els.liteField.hidden = !(fmt === "epub" || (fmt === "pdf" && pdfNative));
+  // render, an EPUB, or a Pages export — the no-native-renderer PDF
+  // fallback just opens the browser's own print dialog, nothing to shrink.
+  els.liteField.hidden = !(fmt === "epub" || fmt === "pages" || (fmt === "pdf" && pdfNative));
   if (fmt === "pdf") {
     els.note.textContent = pdfNative
       ? "A styled PDF will download — cover page, contents, working links, and a bookmarks/navigation pane matching your headings."
@@ -215,7 +215,11 @@ function syncFormat() {
       (pdfNative ? "" : " (No headless browser on the server, so any Mermaid diagrams stay as plain text.)");
   } else if (fmt === "md") {
     els.note.textContent = "A .md file will download. Local images use absolute URLs to this server.";
-  } else {
+  } else if (fmt === "pages") {
+    els.note.textContent = "A .zip of Markdown notes mirroring the outline — one folder per heading, "
+      + "Obsidian-style [[wikilinks]] between notes, and images in one shared assets/ folder. "
+      + "Extract it straight into an Obsidian vault (or anywhere else that understands wikilinks).";
+  } else if (fmt === "json") {
     els.note.textContent = "The raw book file — re-import it with the Import button to restore this book.";
   }
 }
@@ -241,7 +245,7 @@ function go() {
   const palette = store.getSetting("palette");
   const exclude = excludedIds();
   const lite = els.liteCheckbox.checked;
-  if (fmt === "md" || fmt === "json" || fmt === "epub") {
+  if (fmt === "md" || fmt === "json" || fmt === "epub" || fmt === "pages") {
     window.location.href = exportHref(book.id, fmt, palette, exclude, lite);
   } else if (pdfNative) {
     window.location.href = exportHref(book.id, "pdf", palette, exclude, lite);

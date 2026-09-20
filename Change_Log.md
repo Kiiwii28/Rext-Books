@@ -11,9 +11,40 @@ From 2026-09-20 onward, entries are logged at the time each change is made.
 
 ## 2026-09-20
 
+**13:20 SAST** — Added a **"Pages" export mode**: a new `pages.py` module
+producing a `.zip` of Markdown notes mirroring the book's outline, shaped
+for dropping straight into an Obsidian vault. Each container level (a
+heading, or a subheading with its own nested subheadings) becomes a folder
+with a same-named overview note; each leaf subheading becomes one note
+holding its section's content. Notes link to each other via full-vault-path
+Obsidian wikilinks (`[[Chapter 1/Some Subheading|Some Subheading]]`, not
+bare titles) so two subheadings anywhere in the book can share a title
+without colliding; images are copied into one shared `assets/` folder at
+the book's root and referenced via `![[filename]]` embeds, matching
+Obsidian's filename-based link resolution (confirmed against the user's own
+vault/plugin setup) so no relative-path math is needed regardless of
+nesting depth. Mermaid code fences pass through completely untouched —
+Obsidian renders them natively, so unlike the EPUB path this needs no
+headless-browser rasterization step at all. Reuses `epub._AssetBag` for
+image fetching/dedup, `export.filter_book_nodes` for the existing "Content
+to include" picker, and `compress.shrink_image_bytes` for the existing Lite
+toggle (now offered for Pages too). Wired up as a new "Pages" button in the
+Export dialog's format selector (`app.py`'s `_parse_lite`/`_parse_exclude`
+threaded through a new `/api/books/<id>/export.pages` route;
+`static/js/api.js`, `static/js/export-panel.js`, `templates/index.html`).
+Verified: folder/file structure, wikilink correctness, image embed syntax,
+mermaid passthrough, sibling title-collision handling, special-character
+title sanitization, the exclude-content picker, and Lite-mode image
+compression (text identical, only the image bytes differ) — via a test
+book built specifically to exercise all of those at once, run against both
+the main dev server and the portable build.
+
 **12:23 SAST** — Added `CLAUDE.md` (architecture/workflow guide for future
 Claude Code sessions in this repo) and this `Change_Log.md`, populated with
-the history below.
+the history below. Later the same day, added a standing policy section to
+`CLAUDE.md` instructing future sessions to keep this file updated
+unprompted for every change (including reverted ones), for continuity
+across context compaction.
 
 ---
 
