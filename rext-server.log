@@ -1,0 +1,66 @@
+ * Serving Flask app 'app'
+ * Debug mode: off
+WARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.
+ * Running on http://127.0.0.1:5000
+Press CTRL+C to quit
+127.0.0.1 - - [20/Sep/2026 13:45:44] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:45:44] "GET /static/js/export-panel.js HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:46:37] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:46:37] "GET /static/css/style.css HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:46:37] "GET /static/js/main.js HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:46:37] "GET /static/js/tree.js HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:46:37] "GET /static/js/store.js HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:46:37] "GET /static/js/export-panel.js HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:46:37] "GET /static/js/ai-dock.js HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:46:37] "GET /static/js/api.js HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:46:37] "GET /static/js/resize.js HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:46:37] "GET /static/js/spark-panel.js HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:46:37] "GET /static/js/settings-panel.js HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:46:37] "GET /static/js/tour.js HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:46:37] "GET /static/js/book-picker.js HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:46:37] "GET /static/js/prompts.js HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:46:37] "GET /static/js/block.js HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:46:37] "GET /static/js/mermaid-render.js HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:46:37] "GET /static/js/md-toolbar.js HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:46:37] "GET /api/spark-modes HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:46:37] "GET /api/settings HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:46:37] "GET /static/favicon.svg HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:46:38] "GET /api/books HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:46:38] "GET /api/books/d47f5e5a3a6343959c57927ae4168c2f HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:46:38] "GET /api/settings HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:46:38] "POST /render HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:46:38] "POST /render HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:46:38] "GET /health HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:46:38] "GET /api/palettes HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:46:41] "PUT /api/books/d47f5e5a3a6343959c57927ae4168c2f HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:46:43] "PUT /api/books/d47f5e5a3a6343959c57927ae4168c2f HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:46:52] "POST /render HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:46:53] "PUT /api/books/d47f5e5a3a6343959c57927ae4168c2f HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:46:55] "PUT /api/books/d47f5e5a3a6343959c57927ae4168c2f HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:47:06] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:47:06] "GET /static/css/style.css HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:47:06] "GET /static/js/main.js HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:47:06] "GET /static/js/store.js HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:47:06] "GET /static/js/api.js HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:47:06] "GET /static/js/tree.js HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:47:06] "GET /static/js/ai-dock.js HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:47:06] "GET /static/js/export-panel.js HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:47:06] "GET /static/js/spark-panel.js HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:47:06] "GET /static/js/resize.js HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:47:06] "GET /static/js/settings-panel.js HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:47:06] "GET /static/js/tour.js HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:47:06] "GET /static/js/book-picker.js HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:47:07] "GET /static/js/block.js HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:47:07] "GET /static/js/prompts.js HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:47:07] "GET /static/js/mermaid-render.js HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:47:07] "GET /static/js/md-toolbar.js HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:47:07] "GET /api/spark-modes HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:47:07] "GET /static/favicon.svg HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:47:07] "GET /api/settings HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:47:07] "GET /api/books HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:47:07] "GET /api/books/d47f5e5a3a6343959c57927ae4168c2f HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:47:07] "GET /api/settings HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:47:07] "GET /health HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:47:07] "GET /api/palettes HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:47:23] "GET /api/books/d47f5e5a3a6343959c57927ae4168c2f/export.pages?exclude=nmu82wq2515,nmu82k4z11,nmu82k4z12,nmu82k4z13,nmu82lxw14&number=1 HTTP/1.1" 200 -
+127.0.0.1 - - [20/Sep/2026 13:47:48] "GET /api/books/d47f5e5a3a6343959c57927ae4168c2f/export.pages?number=1 HTTP/1.1" 200 -
