@@ -6,6 +6,18 @@ import {
   resolveMode, hasSubTopics, fillTemplate, parseList, COUNT_LABEL, TONES, DEPTHS, FREQUENCIES,
 } from "./prompts.js";
 
+// A ```image-search block is a request the model makes for the server to
+// resolve into a real image (app.py's resolve_images_book_id path) — never
+// content meant to be saved as-is. It's supposed to always be replaced
+// before a generation finishes, but strip any that slipped through here
+// too (e.g. a server-side resolution crash, or the model echoing a stray
+// unresolved block it saw in picked "extra context") so it can never
+// actually reach the book's stored content — mirrors rendering.py's
+// strip_unresolved_image_placeholders, the same last-line-of-defense
+// pattern applied on the read side (render/export).
+const _UNRESOLVED_IMAGE_SEARCH = /```image-search\s*\n[\s\S]*?```\n?/gi;
+const stripUnresolvedPlaceholders = (text) => (text || "").replace(_UNRESOLVED_IMAGE_SEARCH, "");
+
 let els = {};
 let promptDirty = false;
 let current = { mode: null, targetId: undefined };
@@ -94,6 +106,8 @@ export function mountDock(refs) {
     if (!store.getBook()) return;
     store.startBulkPick();
   });
+  els.bulkClearBtn?.addEventListener("click", () => store.clearBulk());
+  els.bulkDeleteBtn?.addEventListener("click", deleteBulkSelection);
 
   els.advToggle.addEventListener("click", () => setAdvOpen(!advOpen));
   els.oaInput.addEventListener("input", () => {
@@ -321,6 +335,23 @@ function renderBulkChips(state) {
   }
 }
 
+/** Delete every currently-queued bulk block (and everything inside it) from
+ *  the book itself — distinct from "Clear", which just empties the queue
+ *  without touching the tree. */
+function deleteBulkSelection() {
+  const ids = store.getBulkIds().slice();
+  if (!ids.length) return;
+  const n = ids.length;
+  const ok = confirm(
+    n === 1
+      ? "Delete this block and everything inside it? This can't be undone from here."
+      : `Delete these ${n} blocks and everything inside them? This can't be undone from here.`,
+  );
+  if (!ok) return;
+  for (const id of ids) store.removeNode(id);
+  store.clearBulk();
+}
+
 const TYPE_ICON = { heading: "H", subheading: "S", section: "¶" };
 
 function nodeOwnLen(node) {
@@ -382,6 +413,12 @@ function renderContextChips(state) {
     const approx = bytes > 1200 ? `~${Math.round(bytes / 1000)}k chars` : `~${bytes} chars`;
     hint.textContent = `${ids.length} block${ids.length > 1 ? "s" : ""} · ${approx}`;
     els.contextChips.append(hint);
+    const clearAll = document.createElement("button");
+    clearAll.type = "button";
+    clearAll.className = "mini-link ctx-clear-all";
+    clearAll.textContent = "Clear all";
+    clearAll.addEventListener("click", () => store.clearContext());
+    els.contextChips.append(clearAll);
   }
 }
 
@@ -477,6 +514,7 @@ async function run() {
     },
     onDone: (full) => {
       if (current.mode === "content") {
+        full = stripUnresolvedPlaceholders(full);
         if (!sectionId) {
           const sec = store.ensureSection(current.targetId);
           sectionId = sec?.id ?? null;
@@ -532,6 +570,7 @@ function streamOnce(payload, mode, targetId) {
       },
       onDone: (full) => {
         if (mode === "content") {
+          full = stripUnresolvedPlaceholders(full);
           if (!sectionId) {
             const sec = store.ensureSection(targetId);
             sectionId = sec?.id ?? null;

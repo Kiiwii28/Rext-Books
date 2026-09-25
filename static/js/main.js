@@ -61,6 +61,8 @@ const dockEls = {
   contextChips: $("ai-context-chips"),
   bulkQueue: $("ai-bulk-queue"),
   bulkChips: $("ai-bulk-chips"),
+  bulkClearBtn: $("btn-bulk-clear"),
+  bulkDeleteBtn: $("btn-bulk-delete"),
   prompt: $("ai-prompt"),
   generateBtn: $("btn-generate"),
   stopBtn: $("btn-stop"),

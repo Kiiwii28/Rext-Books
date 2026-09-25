@@ -174,7 +174,13 @@
         </div>
 
         <div class="ai-bulk-queue" id="ai-bulk-queue" hidden>
-          <span class="ai-tag-label">Bulk queue <span class="hint">— generated one at a time</span></span>
+          <div class="ai-bulk-queue-head">
+            <span class="ai-tag-label">Bulk queue <span class="hint">— generated one at a time</span></span>
+            <div class="ai-bulk-queue-actions">
+              <button type="button" id="btn-bulk-clear" class="mini-link">Clear</button>
+              <button type="button" id="btn-bulk-delete" class="btn ghost sm danger" title="Delete all queued blocks (and everything inside them) from the book">🗑 Delete</button>
+            </div>
+          </div>
           <div id="ai-bulk-chips" class="ai-context-chips"></div>
         </div>
 

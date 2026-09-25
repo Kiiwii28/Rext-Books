@@ -34,6 +34,7 @@ from io import BytesIO
 import config
 import export as _export
 from epub import _AssetBag
+from rendering import strip_unresolved_image_placeholders
 
 _IMG_MD = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
 _INVALID_CHARS = re.compile(r'[\\/:*?"<>|]')
@@ -121,7 +122,7 @@ def _write_notes(tree_nodes: list["_Node"], parent: "_Node", bag: _AssetBag,
                  files: dict[str, str]) -> None:
     for node in tree_nodes:
         parts = [f"*Part of [[{parent.path}|{parent.title}]]*"]
-        body = ((node.section or {}).get("content") or "").strip()
+        body = strip_unresolved_image_placeholders((node.section or {}).get("content") or "").strip()
         if body:
             parts.append(_rewrite_images(body, bag).strip())
         if node.children:

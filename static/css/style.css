@@ -867,6 +867,8 @@ body.is-resizing-y, body.is-resizing-y * { cursor: ns-resize !important; user-se
 /* ---------- bulk queue ---------- */
 .ai-bulk-queue { display: flex; flex-direction: column; gap: 7px; }
 .ai-bulk-queue .hint { text-transform: none; font-weight: 500; letter-spacing: 0; color: var(--ink-faint); }
+.ai-bulk-queue-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ai-bulk-queue-actions { display: flex; align-items: center; gap: 10px; }
 .bulk-chip {
   background: color-mix(in srgb, var(--accent-2) 16%, transparent);
   border-color: color-mix(in srgb, var(--accent-2) 38%, transparent);
@@ -905,6 +907,7 @@ body.is-resizing-y, body.is-resizing-y * { cursor: ns-resize !important; user-se
 }
 .ctx-chip button:hover { background: color-mix(in srgb, var(--err) 18%, transparent); color: var(--err); }
 .ctx-hint { font-size: 11px; color: var(--ink-faint); }
+.ctx-clear-all { margin-left: auto; }
 
 /* ---------- context pick mode ---------- */
 .pick-banner {

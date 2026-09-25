@@ -9,6 +9,100 @@ From 2026-09-20 onward, entries are logged at the time each change is made.
 
 ---
 
+## 2026-09-25 (continued)
+
+**10:11 SAST** — Fixed two related image-placeholder bugs, both reported by
+the user with screenshots of raw internal syntax leaking into rendered
+content:
+
+1. **Unresolved ` ```image-search ` request blocks shown raw to the
+   reader.** These fenced blocks are an internal signal the model emits
+   (only when "Use images" is on) for the server to resolve into a real
+   photo after the stream finishes (`images.resolve_image_placeholders`);
+   traced the resolution code path in full and found it structurally sound
+   (every match is always replaced with either a real image or an empty
+   string, never left raw) — so the likely cause is either a crash outside
+   the per-placeholder guard, or the model echoing a stray unresolved block
+   it saw in picked "extra context" from an earlier, differently-configured
+   generation. Rather than chase one specific trigger, added a
+   defense-in-depth fix that closes the gap regardless of cause: a new
+   `rendering.strip_unresolved_image_placeholders` (mirroring
+   `images._PLACEHOLDER_RE`) now runs inside `render_markdown` itself
+   (covering the live preview, PDF, and EPUB — all three already routed
+   through it), plus in `export.book_to_markdown` and `pages.py` (the two
+   consumers that pass raw Markdown straight through without ever calling
+   `render_markdown`). Also added the equivalent regex client-side in
+   `ai-dock.js`, applied to the generated text right before
+   `store.setContent` in both the single- and bulk-generation paths, so a
+   stray placeholder can no longer even be *saved* into a book's content
+   going forward, not just hidden at render/export time.
+2. **A broken/placeholder image's caption left orphaned below it,
+   disconnected.** Root cause: `rendering.py`'s `render_markdown` ran the
+   "swap a broken image for a dashed-box placeholder" pass
+   (`_IMG_TAG`/`_fix_image`) *before* the "wrap an image+caption paragraph
+   into one `<figure>`" pass (`_IMG_ONLY_P`/`_wrap_image_figure`) — once an
+   `<img>` tag was replaced with a `<figure class="fig-placeholder">`, the
+   `<p><img>...<em>caption</em></p>` pattern the second pass looks for no
+   longer matched (no `<img>` left inside the `<p>`), leaving the caption
+   as a disconnected floating paragraph below the placeholder box instead
+   of attached to it. Fixed by reordering the two passes — wrap first, fix
+   second — so a broken image's placeholder now nests inside the same
+   `<figure class="img-figure">` as its caption, exactly like a working
+   image does.
+
+Verified both via direct Python calls (`rendering.render_markdown`,
+`export.book_to_markdown`, `pages.book_to_pages`), a Node-based test of the
+client-side strip regex, the live `/render` endpoint through the restarted
+production server, and a real-browser screenshot of the fixed
+placeholder+caption grouping (visually matches the intended "grouped, not
+orphaned" result) — plus a regression check confirming a normal working
+image+caption pair still renders exactly as before. Synced to the portable
+build and confirmed importable there too.
+
+---
+
+## 2026-09-25
+
+**09:54 SAST** — Investigated a reported "stuck prompt" bug in the AI dock
+(clearing the prompt box and asking for something different still produced
+the same result) — audited `ai-dock.js`'s `promptDirty`/`refreshPrompt`
+logic and `api.js`'s `streamGenerate` fetch call; found no caching/memoization
+bug (every generation reads the prompt box live at click-time and POSTs a
+fresh, never-cached request). Likely explanation reported back to the user:
+the **Reset** button (tooltip: "Restore the default prompt") does exactly
+that — restores the same deterministic auto-template for a given
+target/mode, which is indistinguishable from "stuck" if interpreted as a
+plain clear button; separately, output style can legitimately stay
+consistent with sibling sections because of the book-outline-context
+feature (2026-09-19) and picked Extra Context, both of which explicitly
+instruct the model to stay stylistically consistent with the rest of the
+book. No code change made for this part — reported findings instead of
+guessing at a fix for a bug that didn't reproduce in the code.
+
+Added three small AI-dock usability improvements (`ai-dock.js`, `main.js`,
+`templates/index.html`, `style.css`):
+- **"Clear all"** for the Extra Context chip row — previously only
+  per-chip removal existed; now a link appears alongside the "N blocks ·
+  ~Nk chars" hint (only when context is picked) that calls the
+  already-existing `store.clearContext()`.
+- **"Clear"** for the Bulk-generate queue — same idea, empties the queue
+  (`store.clearBulk()`) without touching the book itself.
+- **"🗑 Delete"** for the Bulk-generate queue — a new `deleteBulkSelection`
+  in `ai-dock.js` that deletes every currently-queued block (and its
+  subtree) from the book, confirming first with a singular/plural-aware
+  message, distinct from "Clear" (which only empties the picker, never
+  touches the tree). Reuses the existing `store.removeNode`, one call per
+  queued id.
+
+Verified all three via a real browser (CDP): picking 2 context blocks then
+clicking "Clear all" empties the chip row and hides it; picking 2 bulk
+blocks then "Clear" empties the queue while leaving both nodes in the tree;
+picking 2 bulk blocks then "Delete" (confirm dialog intercepted and
+accepted) removes both from the tree and empties the queue, while a
+sibling not in the selection is left untouched; separately confirmed
+declining the confirm dialog leaves both the node and the queue exactly as
+they were.
+
 ## 2026-09-20
 
 **13:45 SAST** — Added an optional **"Number headings" toggle** to the Pages

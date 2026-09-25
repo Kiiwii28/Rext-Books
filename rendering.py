@@ -26,6 +26,24 @@ _MERMAID = re.compile(
     r'<pre><code class="language-mermaid">(.*?)</code></pre>', re.DOTALL,
 )
 
+# A ```image-search block is a request the model makes for the server to
+# resolve into a real image (see images.py's resolve_image_placeholders) —
+# never content meant for a reader. It's supposed to always be replaced
+# (with a real image, or dropped entirely if nothing usable turns up)
+# before a generation is saved, but any gap in that path — a crash outside
+# the per-placeholder guard, or a stray block copied into a *different*
+# generation's output via picked "extra context" that had one still stuck
+# in it — would otherwise leave this raw request block visible to the
+# reader. This is the last line of defense: strip on every render/export
+# pass too, not just at generation time, so any placeholder that slipped
+# through by any means never actually reaches a reader — same pattern as
+# images._PLACEHOLDER_RE.
+_UNRESOLVED_IMAGE_SEARCH = re.compile(r"```image-search\s*\n.*?```\n?", re.DOTALL | re.IGNORECASE)
+
+
+def strip_unresolved_image_placeholders(text: str) -> str:
+    return _UNRESOLVED_IMAGE_SEARCH.sub("", text or "")
+
 # LLMs reach for these when told to "add more images" — they render as a grey box
 # that looks like a bug. Treat them as "figure intended but not available".
 _PLACEHOLDER_HOSTS = (
@@ -89,11 +107,18 @@ def render_markdown(text: str) -> str:
     # math), which without this just passes the literal backslash straight
     # through into the rendered page instead of being consumed as an escape.
     md.ESCAPED_CHARS.append("$")
+    text = strip_unresolved_image_placeholders(text)
     html = md.convert(text or "")
     html = _MERMAID.sub(
         r'<figure class="mermaid-figure"><pre class="mermaid">\1</pre></figure>',
         html,
     )
-    html = _IMG_TAG.sub(lambda m: _fix_image(m.group(0)), html)
+    # Wrap an image+caption paragraph into one <figure> BEFORE checking for a
+    # broken/placeholder src — reversed, a broken image gets swapped for its
+    # own <figure class="fig-placeholder"> first, which no longer matches
+    # _IMG_ONLY_P's "<p><img>...<em>caption</em></p>" pattern (there's no
+    # <img> left inside the <p>), orphaning the caption as a disconnected
+    # paragraph below the placeholder box instead of attached to it.
     html = _IMG_ONLY_P.sub(_wrap_image_figure, html)
+    html = _IMG_TAG.sub(lambda m: _fix_image(m.group(0)), html)
     return html

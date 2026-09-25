@@ -26,7 +26,7 @@ import compress
 import config
 import palettes
 import pdfgen
-from rendering import render_markdown
+from rendering import render_markdown, strip_unresolved_image_placeholders
 
 # WeasyPrint is optional and only tried if no browser is available. Probe for the
 # module without importing it, so its noisy "missing native libs" warning on
@@ -110,7 +110,8 @@ def book_to_markdown(book: dict, base_url: str = "", exclude_ids: set | None = N
             if n.get("id") in exclude_ids:
                 continue
             if n.get("type") == "section":
-                body = _absolutise(n.get("content") or "", base_url)
+                body = strip_unresolved_image_placeholders(n.get("content") or "")
+                body = _absolutise(body, base_url)
                 body = _strip_dupe_heading(body, container_title)
                 out.append(_demote(body, max(0, level - 2)).strip() + "\n")
                 continue
