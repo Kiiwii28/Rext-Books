@@ -46,6 +46,15 @@ export function setValue(id) {
 
 export function getValue() { return value; }
 
+/** Keep the picker in sync with a title change made elsewhere (Settings'
+ *  "Textbook title" field) without a full list refetch. */
+export function updateCurrentTitle(title) {
+  const b = books.find((x) => x.id === value);
+  if (b) b.title = title;
+  syncLabel();
+  renderList();
+}
+
 function syncLabel() {
   const cur = books.find((b) => b.id === value);
   els.label.textContent = cur ? (cur.title || "Untitled") : "—";

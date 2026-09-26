@@ -146,6 +146,40 @@ def set_author(name: str) -> None:
 
 
 # --------------------------------------------------------------------------- #
+#  Blurb (the "A textbook on <topic>." line on export cover pages/TOC notes)   #
+# --------------------------------------------------------------------------- #
+
+DEFAULT_BLURB_TEMPLATE = "A textbook on {topic}."
+
+
+def get_blurb_template() -> str:
+    with _lock:
+        return (_read_settings().get("blurbTemplate") or "").strip() or DEFAULT_BLURB_TEMPLATE
+
+
+def set_blurb_template(template: str) -> None:
+    with _lock:
+        data = _read_settings()
+        template = (template or "").strip()
+        if template and template != DEFAULT_BLURB_TEMPLATE:
+            data["blurbTemplate"] = template
+        else:
+            data.pop("blurbTemplate", None)
+        _write_settings(data)
+
+
+def format_blurb(topic: str) -> str:
+    """The formatted blurb line for one book. Falls back to the default
+    template if the user's saved one has a typo'd/unknown placeholder —
+    a broken Settings value should never be able to break an export."""
+    tmpl = get_blurb_template()
+    try:
+        return tmpl.format(topic=topic or "")
+    except (KeyError, IndexError, ValueError):
+        return DEFAULT_BLURB_TEMPLATE.format(topic=topic or "")
+
+
+# --------------------------------------------------------------------------- #
 #  Pexels API key (optional — powers the image-search tab's stock-photo       #
 #  fallback; Wikimedia Commons search works with no key at all)               #
 # --------------------------------------------------------------------------- #

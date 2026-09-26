@@ -2,7 +2,7 @@
 // palette, and which parts of the book to actually include, then download.
 
 import * as store from "./store.js";
-import { getPalettes, getHealth, exportHref, printHref } from "./api.js";
+import { getPalettes, getHealth, getSettings, saveSettings, exportHref, printHref } from "./api.js";
 
 const TYPE_ICON = { heading: "H", subheading: "S", section: "¶" };
 
@@ -13,6 +13,8 @@ let pdfNative = true;
 let included = new Set();   // node ids currently included in the export
 let collapsed = new Set();  // node ids whose children are currently hidden in the tree
 let contentOpen = false;    // whether the "Content to include" section itself is expanded
+let advOpen = false;        // "Advanced" disclosure (author/diagrams-as-images/lite/numbering/page numbers)
+let authorLoaded = "";      // the author value as fetched, to know whether the field was actually edited
 
 export async function mountExport(refs) {
   els = refs;
@@ -45,8 +47,16 @@ export async function mountExport(refs) {
   });
 
   els.contentToggle.addEventListener("click", () => setContentOpen(!contentOpen));
+  els.advToggle.addEventListener("click", () => setAdvOpen(!advOpen));
 
   els.goBtn.addEventListener("click", go);
+}
+
+function setAdvOpen(open) {
+  advOpen = open;
+  els.advBody.hidden = !open;
+  els.advToggle.setAttribute("aria-expanded", String(open));
+  els.advToggle.classList.toggle("is-open", open);
 }
 
 // ---- content-to-include tree (cascading select, like the context picker) --
@@ -202,11 +212,16 @@ function markSelected() {
 
 function syncFormat() {
   els.paletteField.hidden = fmt !== "pdf" && fmt !== "epub";
+  // Author appears on the front page/byline of everything except the raw
+  // JSON dump (nothing to render there).
+  els.authorField.hidden = fmt === "json";
+  els.diagramsImagesField.hidden = fmt !== "pages";
   // Lite only actually compresses anything server-side for a native PDF
   // render, an EPUB, or a Pages export — the no-native-renderer PDF
   // fallback just opens the browser's own print dialog, nothing to shrink.
   els.liteField.hidden = !(fmt === "epub" || fmt === "pages" || (fmt === "pdf" && pdfNative));
   els.pagesNumberField.hidden = fmt !== "pages";
+  els.pageNumbersField.hidden = !(fmt === "pdf" && pdfNative);
   if (fmt === "pdf") {
     els.note.textContent = pdfNative
       ? "A styled PDF will download — cover page, contents, working links, and a bookmarks/navigation pane matching your headings."
@@ -225,33 +240,50 @@ function syncFormat() {
   }
 }
 
-function open() {
+async function open() {
   const book = store.getBook();
   if (!book) return;
   included = new Set(allIds(book.nodes || []));
   collapsed = new Set();
   collapseAll(book.nodes || []);
   setContentOpen(false);
+  setAdvOpen(false);
   renderContentTree();
   markSelected();
   els.liteCheckbox.checked = false;   // opt-in each time — default export unless asked otherwise
   els.pagesNumberCheckbox.checked = false;
+  els.diagramsImagesCheckbox.checked = false;
+  els.pageNumbersCheckbox.checked = false;
+  try {
+    authorLoaded = (await getSettings()).author || "";
+  } catch {
+    authorLoaded = "";
+  }
+  els.authorInput.value = authorLoaded;
   syncFormat();
   els.backdrop.hidden = false;
 }
 function close() { els.backdrop.hidden = true; }
 
-function go() {
+async function go() {
   const book = store.getBook();
   if (!book) return;
+  const author = els.authorInput.value.trim();
+  if (author !== authorLoaded) {
+    try { await saveSettings({ author }); } catch { /* export still proceeds either way */ }
+  }
   const palette = store.getSetting("palette");
   const exclude = excludedIds();
-  const lite = els.liteCheckbox.checked;
-  const numbered = els.pagesNumberCheckbox.checked;
+  const opts = {
+    lite: els.liteCheckbox.checked,
+    numbered: els.pagesNumberCheckbox.checked,
+    diagramsAsImages: els.diagramsImagesCheckbox.checked,
+    pageNumbers: els.pageNumbersCheckbox.checked,
+  };
   if (fmt === "md" || fmt === "json" || fmt === "epub" || fmt === "pages") {
-    window.location.href = exportHref(book.id, fmt, palette, exclude, lite, numbered);
+    window.location.href = exportHref(book.id, fmt, palette, exclude, opts);
   } else if (pdfNative) {
-    window.location.href = exportHref(book.id, "pdf", palette, exclude, lite, numbered);
+    window.location.href = exportHref(book.id, "pdf", palette, exclude, opts);
   } else {
     window.open(printHref(book.id, palette, exclude), "_blank", "noopener");
   }

@@ -28,16 +28,22 @@ of an EPUB container's ``images/`` manifest entries.
 from __future__ import annotations
 
 import re
+import tempfile
 import zipfile
 from io import BytesIO
+from pathlib import Path
 
 import config
+import epub as _epub
 import export as _export
+import pdfgen
 from epub import _AssetBag
 from rendering import strip_unresolved_image_placeholders
 
 _IMG_MD = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
 _INVALID_CHARS = re.compile(r'[\\/:*?"<>|]')
+_MERMAID_FENCE = re.compile(r"```mermaid\s*\n.*?```\n?", re.DOTALL | re.IGNORECASE)
+_RASTERIZED_MERMAID_IMG = re.compile(r'<figure class="mermaid-figure"><img src="([^"]+)"')
 
 
 def _safe_name(title: str, used_lower: set[str]) -> str:
@@ -60,6 +66,43 @@ def _rewrite_images(content: str, bag: _AssetBag) -> str:
             return m.group(0)   # couldn't fetch it — leave the original Markdown link as a fallback
         return f"![[{name.rsplit('/', 1)[-1]}]]"
     return _IMG_MD.sub(repl, content)
+
+
+def _rasterize_book_mermaid(book: dict, exclude_ids: set, bag: _AssetBag, lite: bool) -> list[str]:
+    """Render the whole book once — the same headless-Chrome pass the EPUB
+    export uses to resolve Mermaid to real SVG — then rasterize every
+    diagram found (reusing epub.py's batching/cropping code as-is) and
+    return the resulting ``![[filename]]`` embed for each one, in the same
+    left-to-right, depth-first order the diagrams themselves appear in the
+    book. The caller substitutes them 1:1 into each section's own
+    ```mermaid``` fences encountered in that same order while walking the
+    node tree — the two traversals visit the same filtered node set in the
+    same order, so position alone is enough to correlate them without
+    needing to track which diagram belongs to which section explicitly.
+
+    Returns an empty list (fences are then left untouched, still valid
+    Markdown) if no headless browser/Pillow is available, or rendering
+    fails for any reason — this is a nice-to-have, never a reason to break
+    the whole export."""
+    try:
+        html_doc = _export.book_to_html(book, None, exclude_ids)
+        if not pdfgen.available():
+            return []
+        with tempfile.TemporaryDirectory(prefix="rext-pages-render-") as d:
+            html_path = Path(d) / "preview.html"
+            html_path.write_text(html_doc, encoding="utf-8")
+            dumped = pdfgen.dump_rendered_dom(html_path.as_uri())
+        out_html = _epub._rasterize_all_mermaid([dumped], bag, lite=lite)[0]
+        return [m.group(1).rsplit("/", 1)[-1] for m in _RASTERIZED_MERMAID_IMG.finditer(out_html)]
+    except Exception:
+        return []
+
+
+def _replace_mermaid_fences(content: str, mermaid_iter) -> str:
+    def repl(m: re.Match) -> str:
+        name = next(mermaid_iter, None)
+        return f"![[{name}]]" if name else m.group(0)   # ran out — leave this one as a live fence
+    return _MERMAID_FENCE.sub(repl, content)
 
 
 class _Node:
@@ -119,23 +162,26 @@ def _build_tree(nodes: list[dict], dir_path: str, numbered: bool = False,
 
 
 def _write_notes(tree_nodes: list["_Node"], parent: "_Node", bag: _AssetBag,
-                 files: dict[str, str]) -> None:
+                 files: dict[str, str], mermaid_iter) -> None:
     for node in tree_nodes:
         parts = [f"*Part of [[{parent.path}|{parent.title}]]*"]
         body = strip_unresolved_image_placeholders((node.section or {}).get("content") or "").strip()
         if body:
+            body = _replace_mermaid_fences(body, mermaid_iter)
             parts.append(_rewrite_images(body, bag).strip())
         if node.children:
             parts.append("## Contents\n" + "\n".join(
                 f"- [[{c.path}|{c.title}]]" for c in node.children))
         files[f"{node.path}.md"] = "\n\n".join(parts).strip() + "\n"
         if node.children:
-            _write_notes(node.children, node, bag, files)
+            _write_notes(node.children, node, bag, files, mermaid_iter)
 
 
 def book_to_pages(book: dict, base_url: str, exclude_ids: set | None = None,
-                  lite: bool = False, numbered: bool = False) -> bytes:
-    nodes = _export.filter_book_nodes(book.get("nodes") or [], exclude_ids or set())
+                  lite: bool = False, numbered: bool = False,
+                  diagrams_as_images: bool = False) -> bytes:
+    exclude_ids = exclude_ids or set()
+    nodes = _export.filter_book_nodes(book.get("nodes") or [], exclude_ids)
     title = (book.get("title") or "Untitled").strip()
     root_name = _safe_name(title, set())
 
@@ -143,15 +189,18 @@ def book_to_pages(book: dict, base_url: str, exclude_ids: set | None = None,
     tree = _build_tree(nodes, root_name, numbered)
     root = _Node("__root__", title, f"{root_name}/{root_name}")
 
+    mermaid_images = (
+        _rasterize_book_mermaid(book, exclude_ids, bag, lite) if diagrams_as_images else []
+    )
     files: dict[str, str] = {}
-    _write_notes(tree, root, bag, files)
+    _write_notes(tree, root, bag, files, iter(mermaid_images))
 
     toc = [f"# {title}"]
     author = config.get_author()
     if author:
         toc.append(f"*by {author}*")
     if book.get("topic"):
-        toc.append(f"*A textbook on {book['topic']}.*")
+        toc.append(f"*{config.format_blurb(book['topic'])}*")
     if tree:
         toc.append("## Contents\n" + "\n".join(f"- [[{c.path}|{c.title}]]" for c in tree))
     files[f"{root.path}.md"] = "\n\n".join(toc).strip() + "\n"

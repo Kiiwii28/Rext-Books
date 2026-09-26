@@ -432,7 +432,7 @@ def _cover_xhtml(title: str, topic: str, author: str) -> str:
 <section class="cover">
   <h1>{title}</h1>
   <div class="band"></div>
-  {f'<p class="topic">A textbook on {topic}</p>' if topic else ''}
+  {f'<p class="topic">{config.format_blurb(topic)}</p>' if topic else ''}
   {f'<p class="author">by {_html.escape(author)}</p>' if author else ''}
   <p class="date">Generated {date.today().isoformat()} &#183; Rextbooks</p>
 </section>
@@ -487,7 +487,7 @@ def _content_opf(book_uuid: str, title: str, author: str, topic: str,
     )
     spine_xml = "".join(f'<itemref idref="{i}"/>' for i in spine_ids)
     creator = f"<dc:creator>{_html.escape(author)}</dc:creator>" if author else ""
-    desc = f"<dc:description>A textbook on {topic}.</dc:description>" if topic else ""
+    desc = f"<dc:description>{config.format_blurb(topic)}</dc:description>" if topic else ""
     modified = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bookid">

@@ -98,6 +98,10 @@ export function mountDock(refs) {
     // from picking — each queued block excludes only itself, at generate time.
     store.startContextPick(store.getBulkIds().length >= 2 ? null : current.targetId);
   });
+  els.contextAllBtn?.addEventListener("click", () => {
+    if (!store.getBook()) return;
+    store.selectAllContext();
+  });
   els.sparkBtn.addEventListener("click", () => {
     if (!store.getBook()) return;
     store.startSparkPick(store.getSelectedId());
@@ -372,6 +376,7 @@ function renderContextChips(state) {
   els.addContextBtn.textContent = ctxPick ? "Done" : "＋ Add context";
   els.addContextBtn.classList.toggle("active", ctxPick);
   els.addContextBtn.disabled = !state.book || sparkPick;
+  if (els.contextAllBtn) els.contextAllBtn.disabled = !state.book || sparkPick;
   els.sparkBtn.classList.toggle("active", sparkPick || store.isSparkModalOpen());
   els.sparkBtn.disabled = !state.book || ctxPick || bulkPick || bulkQueued > 0;
   if (els.bulkBtn) {

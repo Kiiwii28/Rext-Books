@@ -9,6 +9,72 @@ From 2026-09-20 onward, entries are logged at the time each change is made.
 
 ---
 
+## 2026-09-26
+
+**08:06 SAST** — A large batch of features requested together:
+
+- **"Whole book" context select** — `store.selectAllContext()` + a new
+  "📖 Whole book" button next to "＋ Add context" adds every node in the
+  book as context in one click (still excludes whatever's actually being
+  generated, same as ticking manually would).
+- **Pages export: "Diagrams as images"** toggle — rasterizes Mermaid
+  diagrams (reusing `epub._rasterize_all_mermaid` as-is) instead of leaving
+  them as live ```mermaid``` fences, for Obsidian HTML-export plugins whose
+  live-diagram rendering overflows. Implemented via one whole-book headless-
+  Chrome render pass (`pages._rasterize_book_mermaid`), then correlating the
+  resulting rasterized images to each section's own fences *by position* —
+  both traversals visit the same filtered node set in the same left-to-
+  right, depth-first order, so the Nth diagram found rendering the book
+  is always the Nth ```mermaid``` fence encountered walking the tree.
+- **Settings: "Blurb"** — the "A textbook on {topic}." line under the title
+  on export covers/TOC notes is now a configurable global template
+  (`config.get_blurb_template`/`set_blurb_template`, defaulting to the
+  original text) with a Reset button, replacing the hardcoded string in
+  all five places it appeared (`export.py` ×2, `epub.py` ×2, `pages.py`).
+- **Settings: "Textbook title"** — editable per-book title field, updates
+  the book itself (`store.setBookTitle`) and the topbar book-picker's label
+  immediately (`book-picker.updateCurrentTitle`), without a full book-list
+  refetch.
+- **PDF: "Page numbers"** toggle — a footer number on every page except the
+  cover, and each contents-page entry gets its own page number backfilled
+  at the right margin, aligned to that entry's own line. The hard part:
+  finding *where* each contents-page entry actually sits — solved with
+  pypdf's `extract_text(visitor_text=...)`, composing the text-drawing
+  operation's `cm`/`tm` matrices (pypdf hands them back un-composed) to get
+  real page-space coordinates, matched against the outline-derived "first
+  page" for each chapter/major-heading title (same title set the running-
+  header feature already classifies). While building this, found and fixed
+  a real pre-existing bug: the running-header stamper's page-by-page
+  `writer.add_page()` loop silently drops the PDF's own outline/bookmarks
+  (confirmed empirically: 6 entries → 0) — every running-header export has
+  been quietly destroying the PDF's navigation pane the whole time it's
+  existed. Fixed by switching both stampers to `writer.append(reader)`,
+  which preserves it (confirmed: 6 → 6), so bookmarks now survive
+  regardless of which optional stamps are turned on, and the two features
+  compose safely in either order.
+- **Export dialog decluttered** — Author, Diagrams as images, Lite export,
+  Number headings, and Page numbers moved into a collapsible "Advanced"
+  disclosure (same pattern as the AI dock's own Advanced section), each
+  still only shown when relevant to the selected format. The Author field
+  doubles as a shortcut to the same global Settings value — editing it here
+  saves back to Settings before the export downloads.
+
+Verified: the page-numbers feature end-to-end with a real multi-chapter
+book (screenshot-confirmed the contents page's numbers exactly match where
+each chapter/major heading actually starts, footer numbers sequential,
+outline intact in all three toggle combinations); the Pages
+diagrams-as-images correlation directly; Settings title-rename updating
+both the store and the book-picker label live; and every Advanced field's
+per-format visibility in a real browser. Synced to the portable build and
+restarted the production server.
+
+**Deferred (discussion only, no code):** the user asked about eventually
+letting DeepSeek write cross-chapter hyperlinks (Obsidian-style
+`[[#heading]]`) and whether links could stay valid automatically if a
+heading's title changes later — answered in conversation, not implemented.
+
+---
+
 ## 2026-09-25 (continued)
 
 **10:11 SAST** — Fixed two related image-placeholder bugs, both reported by

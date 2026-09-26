@@ -59,6 +59,10 @@ export function setSetting(k, v) {
   mutate((book) => { book.settings = { ...DEFAULT_SETTINGS, ...book.settings, [k]: v }; });
 }
 
+export function setBookTitle(title) {
+  mutate((book) => { book.title = (title || "").trim() || "Untitled"; });
+}
+
 export function select(id) {
   if (id !== pendingEdit) pendingEdit = null;
   const changed = id !== state.selectedId;
@@ -153,6 +157,18 @@ export function toggleContext(id) {
     turningOn ? set.add(x) : set.delete(x);
   }
   state = { ...state, contextIds: [...set] };
+  emit();
+}
+
+/** Every node in the book as context, in one click — same "the node actually
+ *  being generated is always excluded" exclusion the server already applies,
+ *  so ticking the whole book never means "use this section as its own
+ *  context" for whatever's currently selected. */
+export function selectAllContext() {
+  if (!state.book) return;
+  const ids = [];
+  walk(state.book.nodes || [], (n) => { if (n.id !== state.contextTarget) ids.push(n.id); });
+  state = { ...state, contextIds: ids };
   emit();
 }
 

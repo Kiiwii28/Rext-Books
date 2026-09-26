@@ -73,6 +73,8 @@ def api_get_settings():
         "keySource": config.api_key_source(),   # "settings" | "env" | "none"
         "model": config.DEEPSEEK_MODEL,
         "author": config.get_author(),
+        "blurbTemplate": config.get_blurb_template(),
+        "blurbDefault": config.DEFAULT_BLURB_TEMPLATE,
         "hasPexelsKey": bool(config.get_pexels_key()),
         "pexelsUsage": config.get_pexels_usage(),
     })
@@ -81,18 +83,21 @@ def api_get_settings():
 @app.post("/api/settings")
 def api_save_settings():
     data = request.get_json(silent=True) or {}
-    if not {"apiKey", "author", "pexelsApiKey"} & data.keys():
-        return jsonify({"error": "apiKey, author or pexelsApiKey is required"}), 400
+    if not {"apiKey", "author", "blurbTemplate", "pexelsApiKey"} & data.keys():
+        return jsonify({"error": "apiKey, author, blurbTemplate or pexelsApiKey is required"}), 400
     if "apiKey" in data:
         config.set_api_key(data.get("apiKey") or "")
     if "author" in data:
         config.set_author(data.get("author") or "")
+    if "blurbTemplate" in data:
+        config.set_blurb_template(data.get("blurbTemplate") or "")
     if "pexelsApiKey" in data:
         config.set_pexels_key(data.get("pexelsApiKey") or "")
     return jsonify({
         "hasApiKey": bool(config.get_api_key()),
         "keySource": config.api_key_source(),
         "author": config.get_author(),
+        "blurbTemplate": config.get_blurb_template(),
         "hasPexelsKey": bool(config.get_pexels_key()),
     })
 
@@ -278,6 +283,21 @@ def _parse_numbered() -> bool:
     return request.args.get("number", "") in ("1", "true", "on")
 
 
+def _parse_diagrams_as_images() -> bool:
+    """The Pages export's "Diagrams as images" toggle — rasterizes Mermaid
+    diagrams (same technique as the EPUB export) instead of leaving them as
+    live ```mermaid``` fences, for hosts whose renderer doesn't handle a live
+    diagram well (e.g. some Obsidian HTML-export plugins overflow them)."""
+    return request.args.get("diagrams", "") in ("1", "true", "on")
+
+
+def _parse_page_numbers() -> bool:
+    """The PDF export's "Page numbers" toggle — a footer number on every
+    content page, plus each entry in the contents page listing the page it
+    starts on."""
+    return request.args.get("pagenumbers", "") in ("1", "true", "on")
+
+
 @app.get("/api/books/<book_id>/export.json")
 def export_json(book_id: str):
     book = store.get_book(book_id)
@@ -314,7 +334,7 @@ def export_pdf(book_id: str):
     palette = request.args.get("palette") or (book.get("settings") or {}).get("palette")
     try:
         pdf = export.book_to_pdf(book, palette, base_url=request.url_root, exclude_ids=_parse_exclude(),
-                                 lite=_parse_lite())
+                                 lite=_parse_lite(), page_numbers=_parse_page_numbers())
     except subprocess.TimeoutExpired:
         return jsonify({
             "error": "PDF export timed out (tried twice) — this book may be too large or "
@@ -357,7 +377,8 @@ def export_pages(book_id: str):
         return jsonify({"error": "not found"}), 404
     try:
         data = pages.book_to_pages(book, base_url=request.url_root, exclude_ids=_parse_exclude(),
-                                   lite=_parse_lite(), numbered=_parse_numbered())
+                                   lite=_parse_lite(), numbered=_parse_numbered(),
+                                   diagrams_as_images=_parse_diagrams_as_images())
     except subprocess.TimeoutExpired:
         return jsonify({
             "error": "Pages export timed out — this book may be too large or image-heavy for "

@@ -103,7 +103,7 @@ def book_to_markdown(book: dict, base_url: str = "", exclude_ids: set | None = N
     if author:
         out += [f"*by {author}*", ""]
     if book.get("topic"):
-        out += [f"*A textbook on {book['topic']}.*", ""]
+        out += [f"*{config.format_blurb(book['topic'])}*", ""]
 
     def walk(nodes: list[dict], level: int, container_title: str) -> None:
         for n in nodes:
@@ -357,7 +357,7 @@ def book_to_html(book: dict, palette_name: str | None = None, exclude_ids: set |
 <div class="content">
 <div class="cover">
   <h1>{title}</h1><div class="band"></div>
-  {f'<div class="topic">A textbook on {topic}</div>' if topic else ''}
+  {f'<div class="topic">{config.format_blurb(topic)}</div>' if topic else ''}
   {f'<div class="author">by {author}</div>' if author else ''}
   <div class="date">Generated {date.today().isoformat()} &middot; Rextbooks</div>
 </div>
@@ -498,27 +498,157 @@ def _stamp_running_headers(pdf_bytes: bytes, headers: dict[int, tuple[str | None
     """Draw "Chapter" or "Chapter - Major heading" into the existing blank
     top margin of every page that has one (cover/Contents pages are left
     alone — nothing to show yet). One small reportlab-rendered overlay page
-    per PDF page, merged onto the original with pypdf."""
+    per PDF page, merged onto the original with pypdf.
+
+    Uses ``writer.append(reader)`` rather than an ``add_page()`` loop —
+    confirmed empirically that the loop silently drops the document's own
+    outline/bookmarks (0 entries survive vs. all of them via ``append``),
+    which would otherwise destroy the PDF's navigation pane every time a
+    running header is added, and — for anything reading that outline
+    afterward, like the page-numbers feature's contents-page backfill —
+    break it too."""
     reader = pypdf.PdfReader(BytesIO(pdf_bytes))
     writer = pypdf.PdfWriter()
+    writer.append(reader)
     color = HexColor(p.get("muted", "#666666"))
 
-    for i, page in enumerate(reader.pages):
+    for i, page in enumerate(writer.pages):
         chapter, major = headers.get(i, (None, None))
-        if chapter:
-            text = f"{chapter} - {major}" if major else chapter
-            page_w, page_h = float(page.mediabox.width), float(page.mediabox.height)
-            buf = BytesIO()
-            c = _rl_canvas.Canvas(buf, pagesize=(page_w, page_h))
+        if not chapter:
+            continue
+        text = f"{chapter} - {major}" if major else chapter
+        page_w, page_h = float(page.mediabox.width), float(page.mediabox.height)
+        buf = BytesIO()
+        c = _rl_canvas.Canvas(buf, pagesize=(page_w, page_h))
+        c.setFont("Helvetica", 8.5)
+        c.setFillColor(color)
+        # .content's own top/side padding is 14mm/17mm — this sits inside
+        # that existing blank margin, never touching the real content.
+        c.drawString(17 * mm, page_h - 10 * mm, text)
+        c.save()
+        buf.seek(0)
+        page.merge_page(pypdf.PdfReader(buf).pages[0])
+
+    out = BytesIO()
+    writer.write(out)
+    return out.getvalue()
+
+
+def _title_first_pages(pdf_bytes: bytes, chapter_titles: set[str], major_titles: set[str]) -> dict[str, int]:
+    """The first (0-indexed) page each chapter/major heading's own outline
+    bookmark points to — used to backfill page numbers into the contents
+    page. A title appearing more than once in the outline (shouldn't
+    normally happen) keeps its earliest page."""
+    reader = pypdf.PdfReader(BytesIO(pdf_bytes))
+    result: dict[str, int] = {}
+
+    def walk(items) -> None:
+        for it in items:
+            if isinstance(it, list):
+                walk(it)
+                continue
+            title = (getattr(it, "title", None) or "").strip()
+            if title not in chapter_titles and title not in major_titles:
+                continue
+            try:
+                page = reader.get_destination_page_number(it)
+            except Exception:
+                continue
+            if title not in result or page < result[title]:
+                result[title] = page
+
+    try:
+        walk(reader.outline)
+    except Exception:
+        pass
+    return result
+
+
+def _matrix_point(cm, tm) -> tuple[float, float]:
+    """Compose a text-drawing operation's cm (the active transform when it
+    ran) with its tm (text matrix) to get the actual page-space coordinates
+    of the text's baseline origin — pypdf's extract_text(visitor_text=...)
+    hands these back separately, un-composed."""
+    a, b, c, d, e, f = cm
+    tx, ty = tm[4], tm[5]
+    return a * tx + c * ty + e, b * tx + d * ty + f
+
+
+def _toc_entry_positions(pdf_bytes: bytes, titles: set[str]) -> dict[str, tuple[int, float, float]]:
+    """(page_index, x, y) in real page-space of the first place each title
+    is drawn as its own standalone run of text. In practice this only ever
+    matches the contents page's own listing: the *actual* chapter heading
+    later in the document is an exact-text match too, but the contents page
+    always comes first in this app's layout (cover, then contents, then
+    chapters), and each title is only searched for until its first match —
+    so the earlier (contents-page) occurrence always wins, never the real
+    heading further into the book."""
+    if not titles:
+        return {}
+    reader = pypdf.PdfReader(BytesIO(pdf_bytes))
+    found: dict[str, tuple[int, float, float]] = {}
+    remaining = set(titles)
+
+    for page_idx, page in enumerate(reader.pages):
+        if not remaining:
+            break
+
+        def visitor(text, cm, tm, font_dict, font_size, _page_idx=page_idx):
+            stripped = text.strip()
+            if stripped in remaining:
+                x, y = _matrix_point(cm, tm)
+                found[stripped] = (_page_idx, x, y)
+                remaining.discard(stripped)
+
+        try:
+            page.extract_text(visitor_text=visitor)
+        except Exception:
+            continue
+    return found
+
+
+def _stamp_page_numbers(pdf_bytes: bytes, chapter_titles: set[str], major_titles: set[str],
+                        p: dict[str, str]) -> bytes:
+    """Optional "Page numbers" export toggle: a footer number on every page
+    except the cover, plus each contents-page entry gets its own page
+    number drawn at the right margin, aligned to that entry's own line —
+    found by re-reading the *unstamped* PDF's own text positions (see
+    _toc_entry_positions) rather than assuming any particular layout.
+
+    Uses ``writer.append(reader)`` (see _stamp_running_headers for why —
+    the alternative silently drops the outline) so this composes safely
+    with running-header stamping regardless of which one runs first."""
+    reader = pypdf.PdfReader(BytesIO(pdf_bytes))
+    color = HexColor(p.get("muted", "#666666"))
+
+    all_titles = chapter_titles | major_titles
+    first_pages = _title_first_pages(pdf_bytes, chapter_titles, major_titles)
+    toc_positions = _toc_entry_positions(pdf_bytes, all_titles)
+    by_page: dict[int, list[tuple[float, float, int]]] = {}
+    for title, (toc_page, x, y) in toc_positions.items():
+        if title in first_pages:
+            by_page.setdefault(toc_page, []).append((x, y, first_pages[title] + 1))
+
+    writer = pypdf.PdfWriter()
+    writer.append(reader)
+
+    for i, page in enumerate(writer.pages):
+        entries = by_page.get(i) or []
+        if i == 0 and not entries:
+            continue   # cover: no footer number, nothing to backfill
+        page_w, page_h = float(page.mediabox.width), float(page.mediabox.height)
+        buf = BytesIO()
+        c = _rl_canvas.Canvas(buf, pagesize=(page_w, page_h))
+        c.setFillColor(color)
+        if i > 0:
             c.setFont("Helvetica", 8.5)
-            c.setFillColor(color)
-            # .content's own top/side padding is 14mm/17mm — this sits inside
-            # that existing blank margin, never touching the real content.
-            c.drawString(17 * mm, page_h - 10 * mm, text)
-            c.save()
-            buf.seek(0)
-            page.merge_page(pypdf.PdfReader(buf).pages[0])
-        writer.add_page(page)
+            c.drawCentredString(page_w / 2, 10 * mm, str(i + 1))
+        c.setFont("Helvetica", 9)
+        for x, y, page_num in entries:
+            c.drawRightString(page_w - 17 * mm, y, str(page_num))
+        c.save()
+        buf.seek(0)
+        page.merge_page(pypdf.PdfReader(buf).pages[0])
 
     out = BytesIO()
     writer.write(out)
@@ -526,7 +656,7 @@ def _stamp_running_headers(pdf_bytes: bytes, headers: dict[int, tuple[str | None
 
 
 def book_to_pdf(book: dict, palette_name: str | None, base_url: str, exclude_ids: set | None = None,
-                lite: bool = False) -> bytes:
+                lite: bool = False, page_numbers: bool = False) -> bytes:
     engine = pdf_engine()
     if engine == "browser":
         url = (
@@ -536,8 +666,24 @@ def book_to_pdf(book: dict, palette_name: str | None, base_url: str, exclude_ids
         if exclude_ids:
             url += f"&exclude={quote(','.join(exclude_ids))}"
         pdf = pdfgen.url_to_pdf(url)
+        chapters, majors = set(), set()
         try:
             chapters, majors = _major_heading_titles(book.get("nodes") or [], exclude_ids or set())
+        except Exception:
+            pass
+        if page_numbers:
+            # Stamped before running headers, deliberately: both now preserve
+            # the outline via writer.append() (see _stamp_running_headers),
+            # so order no longer matters for correctness — but stamping the
+            # contents-page numbers first, while the running-header overlay
+            # (which repeats a chapter's bare title on every one of its
+            # pages) doesn't exist yet, is one less thing that could ever be
+            # mistaken for the contents page's own listing of that title.
+            try:
+                pdf = _stamp_page_numbers(pdf, chapters, majors, palettes.get(palette_name))
+            except Exception:
+                pass   # page numbers are a nice-to-have — never let it break the export itself
+        try:
             headers = _running_headers(pdf, chapters, majors)
             pdf = _stamp_running_headers(pdf, headers, palettes.get(palette_name))
         except Exception:

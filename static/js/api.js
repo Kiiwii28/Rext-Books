@@ -88,9 +88,10 @@ function withExclude(url, excludeIds) {
 
 /** `lite` only ever applies to pdf/epub/pages — the print fallback (see
  *  printHref) goes through the browser's own print dialog, so there's no
- *  export bytes on the server side for it to compress. `numbered` only
- *  applies to pages. */
-export const exportHref = (bookId, fmt, palette, excludeIds, lite, numbered) => {
+ *  export bytes on the server side for it to compress. `numbered` and
+ *  `diagramsAsImages` only apply to pages; `pageNumbers` only to pdf. */
+export const exportHref = (bookId, fmt, palette, excludeIds, opts = {}) => {
+  const { lite, numbered, diagramsAsImages, pageNumbers } = opts;
   let url = withExclude(
     fmt === "md" ? `/api/books/${bookId}/export.md`
     : fmt === "json" ? `/api/books/${bookId}/export.json`
@@ -99,10 +100,11 @@ export const exportHref = (bookId, fmt, palette, excludeIds, lite, numbered) => 
     : `/api/books/${bookId}/export.pdf?palette=${encodeURIComponent(palette || "")}`,
     excludeIds,
   );
-  if (lite && (fmt === "pdf" || fmt === "epub" || fmt === "pages")) {
-    url += (url.includes("?") ? "&" : "?") + "lite=1";
-  }
-  if (numbered && fmt === "pages") url += (url.includes("?") ? "&" : "?") + "number=1";
+  const add = (key) => { url += (url.includes("?") ? "&" : "?") + key + "=1"; };
+  if (lite && (fmt === "pdf" || fmt === "epub" || fmt === "pages")) add("lite");
+  if (numbered && fmt === "pages") add("number");
+  if (diagramsAsImages && fmt === "pages") add("diagrams");
+  if (pageNumbers && fmt === "pdf") add("pagenumbers");
   return url;
 };
 

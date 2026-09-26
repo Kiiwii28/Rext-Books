@@ -4,8 +4,10 @@
 // browser once saved) without touching source or a .env file.
 
 import { getSettings, saveSettings, testApiKey } from "./api.js";
+import * as store from "./store.js";
 
 let els = {};
+let blurbDefault = "";
 
 export async function mountSettings(refs) {
   els = refs;
@@ -40,6 +42,7 @@ export async function mountSettings(refs) {
   els.testBtn.addEventListener("click", onTest);
   els.saveBtn.addEventListener("click", onSave);
   els.removeBtn.addEventListener("click", onRemove);
+  els.blurbReset.addEventListener("click", () => { els.blurbInput.value = blurbDefault; });
 
   await refreshBadge();
 }
@@ -47,7 +50,10 @@ export async function mountSettings(refs) {
 async function refreshBadge() {
   let s;
   try { s = await getSettings(); }
-  catch { s = { hasApiKey: false, keySource: "none", model: "", author: "", hasPexelsKey: false }; }
+  catch {
+    s = { hasApiKey: false, keySource: "none", model: "", author: "",
+          blurbTemplate: "", blurbDefault: "", hasPexelsKey: false };
+  }
   els.openBtn.classList.toggle("needs-key", !s.hasApiKey);
   els.openBtn.title = s.hasApiKey ? "Settings" : "Settings — no API key set yet";
   return s;
@@ -70,6 +76,12 @@ async function open(prefetched) {
   els.keyInput.type = "password";
   els.toggleBtn.textContent = "👁";
   els.authorInput.value = s.author || "";
+  blurbDefault = s.blurbDefault || "";
+  els.blurbInput.value = s.blurbTemplate || blurbDefault;
+  els.blurbInput.placeholder = blurbDefault;
+  const book = store.getBook();
+  els.titleField.hidden = !book;
+  if (book) els.titleInput.value = book.title || "";
   els.pexelsInput.value = "";
   els.pexelsInput.type = "password";
   els.pexelsToggle.textContent = "👁";
@@ -147,13 +159,19 @@ async function onTest() {
 async function onSave() {
   const key = els.keyInput.value.trim();
   const author = els.authorInput.value.trim();
+  const blurbTemplate = els.blurbInput.value.trim();
   const pexelsKey = els.pexelsInput.value.trim();
   els.saveBtn.disabled = true;
   try {
-    const payload = { author };            // author is never secret — always round-tripped
+    // author/blurb are never secret — always round-tripped
+    const payload = { author, blurbTemplate };
     if (key) payload.apiKey = key;         // key input left blank means "leave the key alone"
     if (pexelsKey) payload.pexelsApiKey = pexelsKey;
     await saveSettings(payload);
+    if (store.getBook()) {
+      const title = els.titleInput.value.trim();
+      if (title && title !== store.getBook().title) store.setBookTitle(title);
+    }
     els.keyInput.value = "";
     els.pexelsInput.value = "";
     setInline("Saved ✓", "ok");

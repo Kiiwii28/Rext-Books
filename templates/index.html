@@ -189,6 +189,7 @@
             <span class="ai-tag-label">Extra context</span>
             <div class="ai-context-btns">
               <button id="btn-add-context" class="btn ghost sm">＋ Add context</button>
+              <button id="btn-context-all" class="btn ghost sm" title="Add every block in the book as context">📖 Whole book</button>
               <button id="btn-spark" class="btn ghost sm" title="Cross-breed two blocks">⚡ Spark</button>
               <button id="btn-bulk" class="btn ghost sm" title="Generate several sibling blocks, one request each">⧉ Bulk</button>
             </div>
@@ -235,18 +236,45 @@
           <div id="palette-grid" class="palette-grid"></div>
         </div>
 
-        <div class="field" id="lite-field">
-          <label class="ai-count-row" id="export-lite-row">
-            <span>📦 Lite export <span class="hint">(smaller file — shrinks images &amp; diagrams)</span></span>
-            <input id="export-lite" type="checkbox">
-          </label>
-        </div>
+        <div class="ai-advanced" id="export-advanced">
+          <button type="button" id="export-advanced-toggle" class="ai-advanced-toggle" aria-expanded="false">
+            <span class="ai-adv-chevron">▸</span>
+            <span class="ai-tag-label">Advanced</span>
+          </button>
+          <div id="export-advanced-body" class="ai-advanced-body" hidden>
+            <div class="field" id="author-field">
+              <span class="field-label">Author</span>
+              <input id="export-author-input" type="text" placeholder="Your name" autocomplete="off" />
+            </div>
 
-        <div class="field" id="pages-number-field" hidden>
-          <label class="ai-count-row" id="export-pages-number-row">
-            <span>🔢 Number headings <span class="hint">(prefixes note titles/filenames with "1", "1-1", … so a host that loses the outline order still sorts correctly)</span></span>
-            <input id="export-pages-number" type="checkbox">
-          </label>
+            <div class="field" id="diagrams-images-field" hidden>
+              <label class="ai-count-row" id="export-diagrams-images-row">
+                <span>🖼 Diagrams as images <span class="hint">(rasterize Mermaid diagrams — works around Obsidian HTML-export plugins whose live diagrams overflow)</span></span>
+                <input id="export-diagrams-images" type="checkbox">
+              </label>
+            </div>
+
+            <div class="field" id="lite-field">
+              <label class="ai-count-row" id="export-lite-row">
+                <span>📦 Lite export <span class="hint">(smaller file — shrinks images &amp; diagrams)</span></span>
+                <input id="export-lite" type="checkbox">
+              </label>
+            </div>
+
+            <div class="field" id="pages-number-field" hidden>
+              <label class="ai-count-row" id="export-pages-number-row">
+                <span>🔢 Number headings <span class="hint">(prefixes note titles/filenames with "1", "1-1", … so a host that loses the outline order still sorts correctly)</span></span>
+                <input id="export-pages-number" type="checkbox">
+              </label>
+            </div>
+
+            <div class="field" id="page-numbers-field" hidden>
+              <label class="ai-count-row" id="export-page-numbers-row">
+                <span>🔢 Page numbers <span class="hint">(footer on every page, and listed next to each entry in the contents page)</span></span>
+                <input id="export-page-numbers" type="checkbox">
+              </label>
+            </div>
+          </div>
         </div>
 
         <div class="field">
@@ -334,12 +362,34 @@
           <div id="settings-inline" class="ai-status" hidden></div>
         </div>
 
+        <div class="field" id="settings-title-field" hidden>
+          <span class="field-label">Textbook title</span>
+          <input id="settings-title-input" type="text" placeholder="Untitled"
+                 autocomplete="off" />
+          <p class="export-note">
+            The current book's title — also updates the book picker in the topbar.
+          </p>
+        </div>
+
         <div class="field">
           <span class="field-label">Author</span>
           <input id="settings-author-input" type="text" placeholder="Your name"
                  autocomplete="off" />
           <p class="export-note">
             Shown on the front page of exported PDFs and EPUBs.
+          </p>
+        </div>
+
+        <div class="field">
+          <div class="ai-context-head">
+            <span class="field-label">Blurb</span>
+            <button type="button" id="settings-blurb-reset" class="mini-link">Reset</button>
+          </div>
+          <input id="settings-blurb-input" type="text" placeholder="A textbook on {topic}."
+                 autocomplete="off" />
+          <p class="export-note">
+            The line under the title on export cover pages/TOC notes — <code>{topic}</code>
+            is replaced with each book's own topic.
           </p>
         </div>
 

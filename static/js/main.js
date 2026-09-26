@@ -9,7 +9,10 @@ import { mountSpark, updateSpark } from "./spark-panel.js";
 import { mountPaneResizer } from "./resize.js";
 import { mountSettings, openIfNoKey } from "./settings-panel.js";
 import { mountTour } from "./tour.js";
-import { mountBookPicker, setBooks as setPickerBooks, setValue as setPickerValue } from "./book-picker.js";
+import {
+  mountBookPicker, setBooks as setPickerBooks, setValue as setPickerValue,
+  updateCurrentTitle,
+} from "./book-picker.js";
 
 const $ = (id) => document.getElementById(id);
 const LAST_BOOK = "rextbooks:lastBook";
@@ -56,6 +59,7 @@ const dockEls = {
   srcPexels: $("ai-src-pexels"),
   subModeRow: $("ai-submode-row"),
   addContextBtn: $("btn-add-context"),
+  contextAllBtn: $("btn-context-all"),
   sparkBtn: $("btn-spark"),
   bulkBtn: $("btn-bulk"),
   contextChips: $("ai-context-chips"),
@@ -80,10 +84,18 @@ const exportEls = {
   formatSeg: $("export-format"),
   paletteField: $("palette-field"),
   grid: $("palette-grid"),
+  advToggle: $("export-advanced-toggle"),
+  advBody: $("export-advanced-body"),
+  authorField: $("author-field"),
+  authorInput: $("export-author-input"),
+  diagramsImagesField: $("diagrams-images-field"),
+  diagramsImagesCheckbox: $("export-diagrams-images"),
   liteField: $("lite-field"),
   liteCheckbox: $("export-lite"),
   pagesNumberField: $("pages-number-field"),
   pagesNumberCheckbox: $("export-pages-number"),
+  pageNumbersField: $("page-numbers-field"),
+  pageNumbersCheckbox: $("export-page-numbers"),
   note: $("export-note"),
   contentToggle: $("export-content-toggle"),
   contentBody: $("export-content-body"),
@@ -116,6 +128,10 @@ const settingsEls = {
   keyInput: $("settings-key-input"),
   toggleBtn: $("settings-key-toggle"),
   authorInput: $("settings-author-input"),
+  titleField: $("settings-title-field"),
+  titleInput: $("settings-title-input"),
+  blurbInput: $("settings-blurb-input"),
+  blurbReset: $("settings-blurb-reset"),
   pexelsInput: $("settings-pexels-input"),
   pexelsToggle: $("settings-pexels-toggle"),
   pexelsClear: $("settings-pexels-clear"),
@@ -182,6 +198,7 @@ store.subscribe((state) => {
   els.tree.hidden = !state.book;
   els.deleteBtn.disabled = !state.book;
   document.getElementById("btn-export").disabled = !state.book;
+  if (state.book) updateCurrentTitle(state.book.title || "Untitled");
 });
 
 function paintSaveState(status) {
