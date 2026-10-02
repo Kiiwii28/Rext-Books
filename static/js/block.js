@@ -31,10 +31,46 @@ function replaceBrokenImg(img) {
     .replaceWith(fig);
 }
 function watchImages(el) {
+  // Only the async `error` event is trusted here — never a synchronous (or
+  // rAF-deferred) img.complete/naturalWidth check. Setting an <img>'s src
+  // always dispatches load/error in a *later* task, even for a fully cached
+  // resource, so a listener attached synchronously right after insertion
+  // (as this is) can never miss the real event. A synchronous check used to
+  // sit here as a "catch already-known-bad images instantly" shortcut, but
+  // it was the actual source of the bug it was meant to prevent: a block
+  // re-render (e.g. right after store.setContent notifies subscribers) can
+  // destroy and recreate this exact <img> a moment after an identical one
+  // was already loading, and checking complete/naturalWidth right then can
+  // catch the fresh element mid-settle and falsely condemn a perfectly good
+  // image. The error listener alone is both sufficient and race-free.
   el.querySelectorAll("img:not([data-imgchk])").forEach((img) => {
     img.dataset.imgchk = "1";
-    if (img.complete && img.naturalWidth === 0) replaceBrokenImg(img);
-    else img.addEventListener("error", () => replaceBrokenImg(img), { once: true });
+    img.addEventListener("error", () => {
+      // Every real-world resolved image this app produces is a same-origin
+      // /assets/ file that's already fully written to disk before its <img>
+      // tag is ever sent to the browser — so a load failure here is expected
+      // to be transient (an interrupted request from some re-render, a
+      // one-off network hiccup) rather than a genuinely missing file. Before
+      // permanently swapping in the placeholder, probe the exact same URL
+      // once more with a fresh element; only give up if that also fails.
+      // Logged either way so a real failure is easy to diagnose from the
+      // console without needing to dig through the Network tab.
+      const src = img.src;
+      const probe = new Image();
+      probe.onload = () => {
+        console.warn(`[image] load failed once but a retry succeeded — treating as transient, not showing a placeholder: ${src}`);
+        img.addEventListener("error", () => {
+          console.warn(`[image] retry-triggered reload also failed — showing the broken-image placeholder: ${src}`);
+          replaceBrokenImg(img);
+        }, { once: true });
+        img.src = src + (src.includes("?") ? "&" : "?") + "_retry=" + Date.now();
+      };
+      probe.onerror = () => {
+        console.warn(`[image] load failed and a retry also failed — showing the broken-image placeholder: ${src}`);
+        replaceBrokenImg(img);
+      };
+      probe.src = src;
+    }, { once: true });
   });
 }
 

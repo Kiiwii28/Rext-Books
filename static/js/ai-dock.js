@@ -494,6 +494,7 @@ async function run() {
   toggleBusy(true);
 
   let sectionId = null;
+  let lastRendered = null;
 
   ctrl = streamGenerate(payload, {
     onStart: () => setStatus(refine ? "Refining…" : "Generating…", "busy"),
@@ -515,16 +516,26 @@ async function run() {
       // The server just resolved ```image-search placeholders into real
       // images (or dropped ones with no match) — an unthrottled render so
       // this final correction can never be swallowed by throttledRenderSection.
-      if (current.mode === "content" && sectionId) renderSection(sectionId, full);
+      if (current.mode === "content" && sectionId) { renderSection(sectionId, full); lastRendered = full; }
     },
-    onDone: (full) => {
+    onDone: async (full) => {
       if (current.mode === "content") {
         full = stripUnresolvedPlaceholders(full);
         if (!sectionId) {
           const sec = store.ensureSection(current.targetId);
           sectionId = sec?.id ?? null;
         }
-        if (sectionId) { store.setContent(sectionId, full); renderSection(sectionId, full); }
+        if (sectionId) {
+          // Let this section's images finish loading before setContent()
+          // triggers a full tree re-render that would tear them down mid-flight.
+          await waitForBlockImages(sectionId);
+          store.setContent(sectionId, full);
+          // Skip re-rendering if onRevise already rendered this exact text —
+          // re-inserting freshly-loading <img> elements a second time can
+          // race with the browser's own image-load state and false-flag a
+          // perfectly good image as broken.
+          if (full !== lastRendered) renderSection(sectionId, full);
+        }
         setStatus(full.trim() ? "Content updated ✓" : "The model returned nothing.",
                   full.trim() ? "ok" : "err");
       } else {
@@ -555,6 +566,7 @@ async function run() {
 function streamOnce(payload, mode, targetId) {
   return new Promise((resolve, reject) => {
     let sectionId = null;
+    let lastRendered = null;
     const c = streamGenerate(payload, {
       onDelta: (_piece, full) => {
         if (mode === "content") {
@@ -571,16 +583,20 @@ function streamOnce(payload, mode, targetId) {
       },
       onStatus: (msg) => setStatus(msg, "busy"),
       onRevise: (full) => {
-        if (mode === "content" && sectionId) renderSection(sectionId, full);
+        if (mode === "content" && sectionId) { renderSection(sectionId, full); lastRendered = full; }
       },
-      onDone: (full) => {
+      onDone: async (full) => {
         if (mode === "content") {
           full = stripUnresolvedPlaceholders(full);
           if (!sectionId) {
             const sec = store.ensureSection(targetId);
             sectionId = sec?.id ?? null;
           }
-          if (sectionId) { store.setContent(sectionId, full); renderSection(sectionId, full); }
+          if (sectionId) {
+            await waitForBlockImages(sectionId);
+            store.setContent(sectionId, full);
+            if (full !== lastRendered) renderSection(sectionId, full);
+          }
         } else {
           const titles = parseList(full);
           if (titles.length) store.appendChildren(targetId, "subheading", titles);
@@ -704,4 +720,27 @@ function throttledRenderSection(id, text) {
 function renderSection(id, text, mermaid = true) {
   const block = document.querySelector(`.block[data-id="${id}"]`);
   if (block && block._renderBody) block._renderBody(text, { mermaid });
+}
+
+// store.setContent() always triggers a full tree re-render (tree.js tears
+// down and rebuilds every block on every store change — see CLAUDE.md), which
+// destroys and recreates any <img> elements this exact section just rendered
+// via onRevise's renderSection call a moment earlier. If that recreation
+// interrupts an in-flight image load, the browser can hand the fresh <img>
+// a false failure. Waiting here for the currently-rendered images to settle
+// (load or error) means the teardown always happens *after* the browser has
+// already cached the result, so the recreated <img> resolves instantly and
+// correctly. Capped so one hung request can't stall saving indefinitely.
+function waitForBlockImages(id, timeoutMs = 4000) {
+  const block = document.querySelector(`.block[data-id="${id}"]`);
+  if (!block) return Promise.resolve();
+  const pending = Array.from(block.querySelectorAll("img")).filter((img) => !img.complete);
+  if (!pending.length) return Promise.resolve();
+  return Promise.race([
+    Promise.all(pending.map((img) => new Promise((resolve) => {
+      img.addEventListener("load", resolve, { once: true });
+      img.addEventListener("error", resolve, { once: true });
+    }))),
+    new Promise((resolve) => setTimeout(resolve, timeoutMs)),
+  ]);
 }

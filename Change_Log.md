@@ -9,6 +9,274 @@ From 2026-09-20 onward, entries are logged at the time each change is made.
 
 ---
 
+## 2026-09-29
+
+**Actual root cause found — the three fixes below were chasing the wrong
+layer entirely.** User sent the raw Markdown of a failing section, and it
+showed the real answer immediately:
+```
+![The workforce: the only input that thinks back](/assets/placeholder)
+
+test
+
+![People are the only business input that can learn, choose, improve — or leave]
+(/assets/0596599aeb074814b9a63ec7c0f59bae/6fb11a80c1b5415dace14ee9bc437dc7.jpg)
+*Photo by Yan Krukau on Pexels*
+```
+The first image's `src` is the **literal string** `/assets/placeholder` —
+not a race, not a timing bug, a genuinely, permanently dead link (confirmed
+in the server log: repeated `GET /assets/placeholder` → 404, hammered
+repeatedly by the session 3 retry logic, which correctly identified it as
+broken every time because it *is* broken). The second image right next to
+it is a real, correctly-resolved one. So in one single generation, the
+model used the proper `\`\`\`image-search` mechanism for one image and, for
+another, hand-wrote a raw Markdown image tag with a made-up path instead —
+directly violating the explicit RULE in `prompts.py` that forbids this.
+
+Root cause: `prompts.py`'s content-mode RULE already told the model "NEVER
+write a Markdown image tag yourself... request one with a
+\`\`\`image-search block instead" — but when "extra context" or "whole
+book" context (added earlier this session) includes another
+already-generated section, that context can contain a *real*, already-
+resolved `![...](/assets/<hash>/<uuid>.jpg)` from the app's own past
+resolution. The model sees that pattern in its own context and imitates it
+for a new image it wants, producing a fake path since it has no real one —
+confirmed as literally `/assets/placeholder`, a value that reads like a
+lazy stand-in a model reaches for. This explains both "sometimes works,
+sometimes doesn't" (only happens when context includes a prior resolved
+image) and the user's own hunch that it traces back to whichever change
+introduced heavier context ("Whole book" context, added in the same batch
+as Pages export) — correct in spirit, even if Pages export itself wasn't
+the mechanism.
+
+Two-part fix:
+- **Defense in depth (the real fix)**: new `images.strip_raw_image_tags()`
+  — regex-strips any raw `![...](...)`  tag from the model's output.
+  Wired into `app.py`'s `_stream_chat_response` to run *unconditionally*
+  (whenever "Use images" is on) and *before* `resolve_image_placeholders`
+  — at that point nothing has legitimately been resolved into a raw tag
+  yet, so anything already in that shape is the hallucination. Runs even
+  when no `\`\`\`image-search` block is present at all (the original bug:
+  the hallucinated tag was the *only* image markup in that pass, so the old
+  code's `if images._PLACEHOLDER_RE.search(full):` guard skipped resolution
+  entirely and the raw dead link sailed straight through unprocessed).
+  Emits a `revise` SSE event if stripping alone changed the text, same as a
+  real resolution would. Logged server-side (`dropped N hand-written image
+  tag(s)...`) whenever it fires.
+- **Prompt reinforcement**: strengthened the RULE in `prompts.py` to name
+  the exact failure mode — explicitly says a real `/assets/...` path seen in
+  provided context is the app's own past resolution for a *different*
+  section, not a template to imitate, and calls out `/assets/placeholder`
+  as a specific example of what not to invent.
+
+Verified: `images.strip_raw_image_tags` unit-tested against the user's
+exact reported text (correctly identifies both raw tags when run on
+already-resolved text — which is *why* it must only ever run pre-resolution,
+never post-hoc); a staged test simulating raw model output with one
+hallucinated tag + one legitimate `\`\`\`image-search` block confirmed the
+fix drops only the hallucinated one and lets real resolution proceed
+normally. 4 live end-to-end generations through the real `/api/ai/generate`
+SSE endpoint, deliberately feeding an already-resolved image via context
+(the exact trigger condition) — model didn't hallucinate in any of the 4
+(expected; it's probabilistic), all four completed cleanly with no
+regression. Synced `app.py`, `images.py`, `prompts.py` to
+`dist-portable/Rextbooks/`. **This needed a full server restart** (unlike
+the earlier JS-only fixes) — the old production process
+(`python -c "import app; ..."` on port 5000, launched with the bare system
+Python) was stopped and restarted with the project's venv Python (the
+system Python lacks `requests` and failed to start — worth noting for next
+time: the user's long-running production server apparently runs from an
+environment with the dependencies available on `PYTHONPATH` some other way
+than what a fresh `python -c "import app"` from the system interpreter
+gets; the venv interpreter is the reliable way to relaunch it). Confirmed
+the restarted server is serving the user's real `./books` directory (their
+actual "Business Management" book, matching the asset hash from their
+screenshot, is present via `/api/books`).
+
+The client-side fixes below (retry-before-placeholder, event-listener-only
+`watchImages`, deferred `store.setContent`) were not the actual cause of
+this specific bug, but they're real, verified improvements in their own
+right (a genuinely interrupted image load — from whatever cause — now
+self-heals instead of permanently breaking) and are staying in place.
+
+---
+
+**Third follow-up — added self-healing retry; extensive stress-testing could
+not reproduce the user's continued failure, so this makes the failure mode
+recoverable regardless of its exact remaining cause.** User reported it
+happening again after the previous fix, on an already-populated section,
+and suspected it might relate to Mermaid diagram rendering (the one setting
+they'd changed). Tested that combination specifically — 2 images + 1 diagram
+together, in the same 55-block book, High frequency for both — 4 clean
+runs. Then stress-tested harder: network throttled to ~200KB/s with 400ms
+latency and browser cache disabled (forcing a real, slow Mermaid CDN
+refetch) — 3 more clean runs. Then 3x repeated regeneration on an
+already-populated section (matching "I even regenerated content") — 3 more
+clean runs. 10/10 across every variation constructed, including the user's
+specific diagram hypothesis; could not reproduce the failure to find a
+further root cause. User confirmed testing in Chrome, ruling out a
+browser-engine difference from the (also Chrome-based) headless testing.
+
+Rather than keep guessing blindly, made the failure mode self-healing:
+`watchImages()` in `block.js` now, on a genuine `error` event, probes the
+exact same URL once more with a fresh `Image()` before permanently showing
+the placeholder. Every resolved image this app produces is a same-origin
+`/assets/` file already fully written to disk before its `<img>` tag ever
+reaches the browser (confirmed repeatedly this session), so a load failure
+is expected to be transient rather than a genuinely missing file — a retry
+should succeed whatever the underlying cause (an interrupted request from
+some other re-render path this session didn't specifically test, e.g.
+`tree.js`'s `forceRender()` via the edit-lock/focusout mechanism, a one-off
+network hiccup, etc.). If the retry succeeds, the `<img>` is reloaded with a
+cache-busting query param (forcing an actual reload rather than a same-value
+no-op `src` assignment) instead of showing a placeholder; a `console.warn`
+either way makes a genuine remaining failure immediately diagnosable from
+the browser console without digging through the Network tab. Verified
+end-to-end against the *actual* `block.js` code (not a reimplementation): a
+real image was resolved and saved to disk via `images.resolve_image_placeholders`,
+embedded in a real book, and CDP's `Fetch` domain was used to deterministically
+fail the *first* request for that exact URL (a genuine, forced network-level
+failure — not a simulated detection bug) — the app recovered automatically:
+`naturalWidth: 1280`, zero `.fig-placeholder` elements, and the expected
+`[image] load failed once but a retry succeeded…` message in the console.
+Synced to `dist-portable/Rextbooks/static/js/block.js`.
+
+---
+
+**Second follow-up — the `waitForBlockImages` fix (below) was still
+incomplete; the actual root cause is now fixed.** User confirmed the hard
+refresh fixed previously-broken images (expected — a plain, single render of
+already-saved content never hits this race) but a *new* generation on a
+real, sizeable book still produced one broken placeholder among two images.
+Root-caused for real this time: `static/js/block.js`'s `watchImages()` used
+a synchronous (well, one-frame-deferred, per the first attempt below)
+`img.complete && img.naturalWidth === 0` check to catch "already known bad"
+images fast, on top of the `error` event listener. Verified empirically via
+a focused CDP test (`data:` URL images, since they load fast enough to
+control precisely): recreating a fresh `<img>` with a `src` the browser has
+already loaded once *can* resolve `complete`/`naturalWidth` **synchronously**,
+immediately after insertion — contrary to the assumption behind the earlier
+rAF-deferred version. That's exactly the shape of `renderTree`'s teardown+
+rebuild: a fresh `<img>` for a just-loaded URL, checked essentially
+immediately. If that synchronous resolution ever lands mid-way through a
+re-decode (a genuinely separate browser-internal race, still not fully
+pinned down at the browser-implementation level, but irrelevant to the fix),
+it reports a false `naturalWidth: 0` and `replaceBrokenImg` permanently
+swaps in the placeholder — no retry, ever.
+
+The actual, complete fix: removed the proactive check entirely. Per the
+HTML spec, setting an `<img>`'s `src` always queues its `load`/`error`
+dispatch as a **later task**, never synchronously within the script turn
+that set it — so an `error` listener attached immediately after insertion
+(which `watchImages` already does) can never miss the real event, cached or
+not. Confirmed this directly too: a garbage `data:` URL image reports
+`complete: false` synchronously every time, and its `error` event still
+fires reliably moments later. So the "catch it instantly" shortcut was
+solving a problem that didn't exist, while causing the one that did.
+`watchImages` now does nothing but attach the `error` listener — no
+`complete`/`naturalWidth` check anywhere, synchronous or deferred.
+
+Verified with a live CDP test against a **55-block, 25-subheading seeded
+book** (closer to real-book scale than the earlier small test books) — real
+generation, 2 images, High image frequency, through the actual AI dock UI —
+run 4 times, zero broken placeholders every time. Synced to
+`dist-portable/Rextbooks/static/js/block.js`.
+
+---
+
+**Follow-up — the first fix (`waitForBlockImages`) below was incomplete.** User hard-refreshed,
+regenerated, and still saw a broken placeholder (one of two images in the
+same section; the other rendered fine) — same signature as before (caption
+is alt text, not a "Photo by X" attribution, confirming it's the client-side
+placeholder swap, not a genuinely unresolved image). The first fix only
+addressed `ai-dock.js`'s own redundant `onRevise`+`onDone` double-render; it
+did nothing about the *real* remaining destroyer: `store.setContent()`
+(called from `onDone`) always triggers `store`'s `emit()`, which `main.js`'s
+`store.subscribe` callback turns into `tree.js`'s `renderTree()` — and
+`renderTree` does an unconditional `container.innerHTML = ""` + full rebuild
+on *every* store change (this is documented, intentional architecture, see
+CLAUDE.md — "full re-render on every store change... simpler than
+diffing"). So immediately after `onRevise` renders the resolved image and
+its `<img>` starts loading, `onDone`'s `store.setContent()` tears down and
+recreates that exact block (and its `<img>`) again via `renderTree`,
+regardless of the first fix — confirmed with a `MutationObserver`-
+instrumented live CDP test showing a destroy+recreate pair a few ms after
+the image's first insertion.
+
+Rather than touching `tree.js`'s render strategy (deliberately simple,
+touching it risks the rest of the app), added a scoped wait in `ai-dock.js`:
+a new `waitForBlockImages(sectionId, timeoutMs = 4000)` finds that section's
+current `<img>` elements and returns a promise that resolves once every one
+has fired `load` or `error` (or the 4s cap elapses, so one hung request
+can't stall saving indefinitely). Both `onDone` handlers (`run()` and the
+bulk-generate `streamOnce()`) now `await` it *before* calling
+`store.setContent()`. This doesn't prevent `renderTree`'s teardown — it just
+guarantees the teardown always happens *after* the browser has already
+resolved that URL, so the recreated `<img>` is a fast, correct cache hit
+instead of a fresh in-flight request getting interrupted. Verified with 5
+consecutive live CDP runs through the real AI dock UI (1–2 images each,
+High image frequency) — all landed at `complete: true` with a real
+`naturalWidth` and zero `.fig-placeholder` elements. Synced to
+`dist-portable/Rextbooks/static/js/ai-dock.js`.
+
+---
+
+**Fixed: images showing as broken placeholders right after content
+generation.** User reported (with a screenshot) that a resolved image —
+valid src, valid caption — rendered as a broken-image placeholder box
+immediately after generation, "for all images." Extensive backend testing
+(image search/resolve/save/serve, `rendering.render_markdown` on the exact
+resolved markdown, a full real SSE `/api/ai/generate` run, the live
+`/render` HTTP endpoint) all produced correct output — ruled out anything
+server-side. Root cause was client-side, in `static/js/block.js`'s
+`watchImages()`: after a fresh `<img>` element is inserted, it synchronously
+checks `img.complete && img.naturalWidth === 0` to catch already-known-bad
+cached images, and swaps in a permanent placeholder (`replaceBrokenImg`) if
+so — a one-way swap with no retry. Two things could make that synchronous
+check false-positive on a perfectly good, still-loading image:
+
+1. `static/js/ai-dock.js`'s `onRevise` and `onDone` handlers both called
+   `renderSection(sectionId, full)` with (in the image-resolution case)
+   identical text moments apart — destroying and recreating the `<img>`
+   element a second time right as its first load was starting.
+2. Independently, `main.js`'s `store.subscribe` callback calls
+   `renderTree(state)` on *every* state change, so `store.setContent()`
+   (called from `onDone`) triggers its own additional re-render/recreation
+   of the block regardless of (1).
+
+Confirmed via a `MutationObserver`-instrumented live CDP test (real
+generation through the actual AI dock UI, `BOOKS_DIR` pointed at an isolated
+test dir) that the image `<img>` element was being destroyed and recreated
+2–3 times within ~100ms of first insertion.
+
+Fix (two parts, both low-risk):
+- `ai-dock.js` (`run()` and `streamOnce()`): track `lastRendered`, the text
+  `onRevise` last rendered; `onDone` now only calls `renderSection` again if
+  `full !== lastRendered`, eliminating the redundant explicit re-render.
+  This is safe even if `stripUnresolvedPlaceholders` changes `full` in
+  `onDone` — the comparison still catches genuine differences and re-renders
+  then.
+- `block.js` (`watchImages`): the `error` listener is still attached
+  synchronously (always reliable), but the "already complete and broken"
+  check is now deferred one `requestAnimationFrame` tick (`img.isConnected`
+  guarded), giving the browser a chance to settle a freshly-(re)inserted
+  image's true load state before it's judged — closes the remaining race
+  from the unavoidable `renderTree` re-render in (2) above without weakening
+  real-failure detection at all (a genuinely dead image still gets caught,
+  just one frame later).
+
+Verified with a live CDP test driving the real AI-dock UI end-to-end
+(select subheading → fill prompt → enable images → Generate → poll status →
+inspect final DOM): image ends at `complete: true, naturalWidth: 1280`, zero
+`.fig-placeholder` elements, and the mutation log shows the churn reduced
+from 3 insertion cycles to 1 clean insertion + 1 harmless already-connected
+recreate (down from what would have been up to 3 destroy/recreate cycles
+pre-fix). Synced to `dist-portable/Rextbooks/static/js/{ai-dock,block}.js`.
+Static-JS-only change — no server restart needed, just a browser reload
+(`SEND_FILE_MAX_AGE_DEFAULT = 0` already forces revalidation).
+
+---
+
 ## 2026-09-26
 
 **08:06 SAST** — A large batch of features requested together:

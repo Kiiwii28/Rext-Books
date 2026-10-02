@@ -150,10 +150,17 @@ def _content_system_prompt(*, no_diagrams: bool = False, no_images: bool = False
     elif use_images:
         rules.append(
             "You have no way to know a real image URL, so NEVER write a Markdown "
-            'image tag ("![...](...)") yourself and never invent or guess a URL. '
-            "When a real photo or illustration would genuinely help, request one "
-            "with a fenced ```image-search block instead — the app searches for "
-            "and inserts a real image server-side after you finish. Format exactly:\n"
+            'image tag ("![...](...)") yourself and never invent or guess a URL — '
+            "not even one that looks plausible, like \"/assets/placeholder\" or "
+            "\"/assets/<book-id>/<file>\". This rule holds even if the context "
+            "below shows other sections that already contain a real, working "
+            '"![...](/assets/...)" image — that exact-looking path was filled in '
+            "by the app after a real search, for a different section; it is not a "
+            "template you can reuse or imitate, and copying its shape with a made-"
+            "up path produces a dead link. When a real photo or illustration would "
+            "genuinely help, request one with a fenced ```image-search block "
+            "instead — the app searches for and inserts a real image server-side "
+            "after you finish. Format exactly:\n"
             "```image-search\n"
             "query: <short search terms for the general subject or a fitting visual>\n"
             "caption: <a short caption naming the general idea or theme it represents>\n"

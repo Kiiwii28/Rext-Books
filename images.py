@@ -449,6 +449,27 @@ def _suggest_alternative_query(query: str, caption: str, rejected_titles: list[s
     return reply
 
 
+_RAW_IMG_TAG_RE = re.compile(r"!\[[^\]]*\]\([^)]*\)\n?")
+
+
+def strip_raw_image_tags(text: str) -> tuple[str, int]:
+    """Drop any Markdown image tag the model wrote directly, instead of the
+    required ```image-search request block (see prompts.py's RULE forbidding
+    a hand-written image tag when "Use images" is on). Must run BEFORE
+    ``resolve_image_placeholders`` — at that point nothing has legitimately
+    been resolved into a raw ![...](...) tag yet, so any that already exist
+    are the model imitating an already-resolved image it saw elsewhere (e.g.
+    a real ![...](/assets/<hash>/<uuid>.jpg) from another section pulled in
+    as "extra context" or whole-book context), hallucinating its own fake
+    path instead of following the rule — confirmed in practice as literally
+    ``/assets/placeholder``, which 404s forever. Silently dropped, same as
+    an ```image-search block the search/fetch pipeline couldn't resolve.
+
+    Returns (new_text, dropped_count)."""
+    dropped = len(_RAW_IMG_TAG_RE.findall(text))
+    return _RAW_IMG_TAG_RE.sub("", text), dropped
+
+
 def resolve_image_placeholders(text: str, book_id: str, *, source: str = "auto") -> tuple[str, int, int]:
     """Replace every ```image-search request block with a real, locally-saved
     image — searched via Wikimedia/Pexels (or whichever ``source`` the two

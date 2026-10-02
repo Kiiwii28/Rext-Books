@@ -529,7 +529,24 @@ def _stream_chat_response(messages: list[dict], start_payload: dict,
                 full_parts.append(piece)
                 yield _sse("delta", {"text": piece})
             if resolve_images_book_id:
-                full = "".join(full_parts)
+                original = "".join(full_parts)
+                full = original
+                # The model is instructed to request images only via a
+                # ```image-search block and to NEVER hand-write a Markdown
+                # image tag itself — but it can still imitate a real
+                # ![...](/assets/...) it saw in its own context (another
+                # already-generated section pulled in as extra/whole-book
+                # context), hallucinating a fake path of its own. Strip any
+                # such raw tag before resolving the real ```image-search
+                # blocks, so a hallucinated dead link can never reach saved
+                # content even when it's the only image markup present (no
+                # ```image-search block to trigger the check below).
+                full, dropped_raw = images.strip_raw_image_tags(full)
+                if dropped_raw:
+                    print(f"[app] dropped {dropped_raw} hand-written image tag(s) "
+                          "the model wrote instead of an image-search block",
+                          file=sys.stderr, flush=True)
+                revised = full
                 if images._PLACEHOLDER_RE.search(full):
                     yield _sse("status", {"message": "Finding images…"})
                     try:
@@ -542,10 +559,10 @@ def _stream_chat_response(messages: list[dict], start_payload: dict,
                         revised, resolved, total = full, 0, 0
                     print(f"[app] image resolution: {resolved} of {total} placeholder(s) resolved",
                           file=sys.stderr, flush=True)
-                    if revised != full:
-                        yield _sse("revise", {"text": revised})
                     if total:
                         yield _sse("status", {"message": f"Found {resolved} of {total} image(s)."})
+                if revised != original:
+                    yield _sse("revise", {"text": revised})
             yield _sse("done", {})
         except requests.HTTPError as exc:
             yield _sse("error", {"message": str(exc)})
