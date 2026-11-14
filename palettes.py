@@ -13,6 +13,17 @@ text stays readable:
 
 from __future__ import annotations
 
+import re
+import time
+import uuid
+
+import config
+
+ROLES = ("bg", "text", "heading", "accent", "muted")
+CUSTOM_PREFIX = "custom-"
+MAX_CUSTOM = 50
+_HEX = re.compile(r"^#[0-9A-Fa-f]{6}$")
+
 PALETTES: dict[str, dict[str, str]] = {
     "classic":     {"label": "Classic",     "bg": "#FFFFFF", "text": "#1F2430", "heading": "#111418", "accent": "#3355DD", "muted": "#6B7280"},
     "warm":        {"label": "Warm",        "bg": "#FFFBF2", "text": "#3B3838", "heading": "#F77575", "accent": "#90AACB", "muted": "#B79B86"},
@@ -34,5 +45,60 @@ PALETTES: dict[str, dict[str, str]] = {
 DEFAULT = "popular"
 
 
+def _clean(raw: dict) -> dict | None:
+    """A validated copy of a custom palette, or None if anything's off.
+    Every role value ends up inside CSS in the exports and inline styles in
+    the browser, so only strict #RRGGBB hex is ever let through."""
+    if not isinstance(raw, dict):
+        return None
+    label = str(raw.get("label") or "").strip()[:40]
+    if not label:
+        return None
+    out = {"label": label}
+    for role in ROLES:
+        value = str(raw.get(role) or "")
+        if not _HEX.match(value):
+            return None
+        out[role] = value.upper()
+    return out
+
+
+def custom_palettes() -> dict[str, dict]:
+    # Re-validated on read too — local_settings.json is a plain file anyone
+    # can hand-edit, and a bad value must never reach an export's CSS.
+    out = {}
+    for key, raw in config.get_custom_palettes().items():
+        p = _clean(raw)
+        if p and key.startswith(CUSTOM_PREFIX):
+            out[key] = {**p, "custom": True, "created": raw.get("created", 0)}
+    return out
+
+
+def all_palettes() -> dict[str, dict]:
+    return {**PALETTES, **custom_palettes()}
+
+
+def create_custom(raw: dict) -> tuple[str, dict]:
+    p = _clean(raw)
+    if p is None:
+        raise ValueError("A palette needs a name and a #RRGGBB colour for every role.")
+    if len(config.get_custom_palettes()) >= MAX_CUSTOM:
+        raise ValueError(f"You can keep up to {MAX_CUSTOM} custom palettes — delete one first.")
+    key = CUSTOM_PREFIX + uuid.uuid4().hex[:10]
+    stored = {**p, "created": time.time()}
+    config.save_custom_palette(key, stored)
+    return key, {**p, "custom": True, "created": stored["created"]}
+
+
+def delete_custom(key: str) -> bool:
+    if not key.startswith(CUSTOM_PREFIX):
+        return False
+    return config.delete_custom_palette(key)
+
+
 def get(name: str | None) -> dict[str, str]:
+    if name and name.startswith(CUSTOM_PREFIX):
+        p = custom_palettes().get(name)
+        if p:
+            return p
     return PALETTES.get(name or DEFAULT, PALETTES[DEFAULT])

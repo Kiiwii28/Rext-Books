@@ -2,9 +2,22 @@
 // palette, and which parts of the book to actually include, then download.
 
 import * as store from "./store.js";
-import { getPalettes, getHealth, getSettings, saveSettings, exportHref, printHref } from "./api.js";
+import {
+  getPalettes, createPalette, deletePalette, getHealth, getSettings, saveSettings, exportHref, printHref,
+} from "./api.js";
 
 const TYPE_ICON = { heading: "H", subheading: "S", section: "¶" };
+const DEFAULT_PALETTE = "popular";
+
+// The five document roles a palette colours — same keys palettes.py uses.
+const ROLES = [
+  { key: "bg", label: "Background", hint: "The page colour behind everything" },
+  { key: "text", label: "Body text", hint: "Paragraphs, lists and table text" },
+  { key: "heading", label: "Headings", hint: "Chapter and section titles, bold text" },
+  { key: "accent", label: "Accent", hint: "Links, cover band, heading rules, table headers" },
+  { key: "muted", label: "Muted", hint: "Captions, borders and secondary text" },
+];
+const HEX = /^#?([0-9a-f]{6})$/i;
 
 let els = {};
 let palettes = {};
@@ -15,19 +28,28 @@ let collapsed = new Set();  // node ids whose children are currently hidden in t
 let contentOpen = false;    // whether the "Content to include" section itself is expanded
 let advOpen = false;        // "Advanced" disclosure (author/diagrams-as-images/lite/numbering/page numbers)
 let authorLoaded = "";      // the author value as fetched, to know whether the field was actually edited
+let draft = {};             // colours being edited in the new-palette editor, keyed by role
+let roleInputs = {};        // role -> { color, hex } inputs in the editor
 
 export async function mountExport(refs) {
   els = refs;
 
   try { pdfNative = (await getHealth()).pdf !== false; } catch { pdfNative = false; }
-  try { palettes = await getPalettes(); } catch { palettes = {}; }
-  renderSwatches();
+  buildRoleRows();
 
   els.openBtn.addEventListener("click", open);
   els.closeBtn.addEventListener("click", close);
   els.cancelBtn.addEventListener("click", close);
   els.backdrop.addEventListener("click", (e) => { if (e.target === els.backdrop) close(); });
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !els.backdrop.hidden) close(); });
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || els.backdrop.hidden) return;
+    // Escape backs out of the palette editor first, then the dialog.
+    if (!els.peEditor.hidden) closeEditor();
+    else close();
+  });
+  els.peCancel.addEventListener("click", closeEditor);
+  els.peSave.addEventListener("click", saveDraft);
+  els.peName.addEventListener("keydown", (e) => { if (e.key === "Enter") saveDraft(); });
 
   els.formatSeg.querySelectorAll(".seg-btn").forEach((b) => {
     b.addEventListener("click", () => {
@@ -186,22 +208,181 @@ function excludedIds() {
   return ex.length ? ex : null;
 }
 
+async function loadPalettes() {
+  try { palettes = await getPalettes(); } catch { palettes = {}; }
+  renderSwatches();
+}
+
+/** Built-ins in the order the server sends them, then custom palettes
+ *  oldest-first — so a new palette always appears last, right before "+".
+ *  (Flask sorts JSON keys, so server order alone would interleave them.) */
+function orderedPalettes() {
+  const entries = Object.entries(palettes);
+  const builtIn = entries.filter(([, p]) => !p.custom);
+  const custom = entries.filter(([, p]) => p.custom)
+    .sort(([, a], [, b]) => (a.created || 0) - (b.created || 0));
+  return [...builtIn, ...custom];
+}
+
 function renderSwatches() {
   els.grid.innerHTML = "";
-  for (const [key, p] of Object.entries(palettes)) {
+  for (const [key, p] of orderedPalettes()) {
+    // A wrapper rather than the button itself carries the delete control —
+    // a <button> can't legally contain another <button>.
+    const wrap = document.createElement("div");
+    wrap.className = "swatch-wrap" + (p.custom ? " is-custom" : "");
+
     const btn = document.createElement("button");
+    btn.type = "button";
     btn.className = "swatch";
     btn.dataset.key = key;
     btn.title = p.label;
-    btn.innerHTML =
-      `<span class="sw-strip">` +
-      [p.bg, p.heading, p.accent, p.text].map((c) => `<i style="background:${c}"></i>`).join("") +
-      `</span><span class="sw-name">${p.label}</span>`;
+    const strip = document.createElement("span");
+    strip.className = "sw-strip";
+    for (const c of [p.bg, p.heading, p.accent, p.text]) {
+      const i = document.createElement("i");
+      i.style.background = c;
+      strip.append(i);
+    }
+    const name = document.createElement("span");
+    name.className = "sw-name";
+    name.textContent = p.label;   // user-typed for custom palettes — never innerHTML
+    btn.append(strip, name);
     btn.addEventListener("click", () => {
       store.setSetting("palette", key);
       markSelected();
     });
-    els.grid.append(btn);
+    wrap.append(btn);
+
+    if (p.custom) {
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "sw-del";
+      del.title = `Delete “${p.label}”`;
+      del.setAttribute("aria-label", `Delete palette ${p.label}`);
+      del.textContent = "✕";
+      del.addEventListener("click", () => removePalette(key, p.label));
+      wrap.append(del);
+    }
+    els.grid.append(wrap);
+  }
+
+  const add = document.createElement("button");
+  add.type = "button";
+  add.className = "swatch swatch-add";
+  add.title = "Create your own palette";
+  add.setAttribute("aria-label", "Create a custom palette");
+  add.innerHTML = `<span class="sw-add-plus">+</span><span class="sw-name">New palette</span>`;
+  add.addEventListener("click", openEditor);
+  els.grid.append(add);
+
+  markSelected();
+}
+
+async function removePalette(key, label) {
+  if (!confirm(`Delete the palette “${label}”? This can't be undone.`)) return;
+  try {
+    await deletePalette(key);
+  } catch (err) {
+    alert(`Couldn't delete the palette: ${err.message}`);
+    return;
+  }
+  delete palettes[key];
+  if (store.getSetting("palette") === key) store.setSetting("palette", DEFAULT_PALETTE);
+  renderSwatches();
+}
+
+// ---- new-palette editor ---------------------------------------------------
+
+function buildRoleRows() {
+  els.peRoles.innerHTML = "";
+  for (const role of ROLES) {
+    const row = document.createElement("div");
+    row.className = "pe-role";
+
+    const color = document.createElement("input");
+    color.type = "color";
+    color.id = `pe-color-${role.key}`;
+    color.className = "pe-color";
+
+    const text = document.createElement("label");
+    text.className = "pe-role-text";
+    text.htmlFor = color.id;
+    const lbl = document.createElement("span");
+    lbl.className = "pe-role-label";
+    lbl.textContent = role.label;
+    const hint = document.createElement("span");
+    hint.className = "pe-role-hint";
+    hint.textContent = role.hint;
+    text.append(lbl, hint);
+
+    const hex = document.createElement("input");
+    hex.type = "text";
+    hex.className = "pe-hex";
+    hex.maxLength = 7;
+    hex.spellcheck = false;
+    hex.autocomplete = "off";
+    hex.setAttribute("aria-label", `${role.label} hex colour`);
+
+    color.addEventListener("input", () => setRole(role.key, color.value));
+    hex.addEventListener("input", () => {
+      const m = HEX.exec(hex.value.trim());
+      hex.classList.toggle("is-invalid", !m);
+      if (m) setRole(role.key, `#${m[1]}`, { fromHex: true });
+    });
+    // A half-typed/invalid hex snaps back to the last good colour on blur.
+    hex.addEventListener("blur", () => {
+      hex.value = draft[role.key];
+      hex.classList.remove("is-invalid");
+    });
+
+    row.append(color, text, hex);
+    els.peRoles.append(row);
+    roleInputs[role.key] = { color, hex };
+  }
+}
+
+function setRole(key, value, { fromHex = false } = {}) {
+  value = value.toUpperCase();
+  draft[key] = value;
+  const { color, hex } = roleInputs[key];
+  color.value = value.toLowerCase();
+  if (!fromHex) hex.value = value;
+  els.pePreview.style.setProperty(`--pe-${key}`, value);
+}
+
+function openEditor() {
+  // Start from whichever palette is currently selected — tweaking one is
+  // usually quicker than building from scratch.
+  const base = palettes[store.getSetting("palette")] || palettes[DEFAULT_PALETTE] || {};
+  for (const role of ROLES) setRole(role.key, base[role.key] || "#000000");
+  els.peName.value = "";
+  els.peError.hidden = true;
+  els.peEditor.hidden = false;
+  els.grid.querySelector(".swatch-add")?.classList.add("is-active");
+  els.peName.focus();
+}
+
+function closeEditor() {
+  els.peEditor.hidden = true;
+  els.grid.querySelector(".swatch-add")?.classList.remove("is-active");
+}
+
+async function saveDraft() {
+  const customCount = Object.values(palettes).filter((p) => p.custom).length;
+  const label = els.peName.value.trim() || `Custom ${customCount + 1}`;
+  els.peSave.disabled = true;
+  try {
+    const { key, palette } = await createPalette({ label, ...draft });
+    palettes[key] = palette;
+    store.setSetting("palette", key);
+    closeEditor();
+    renderSwatches();
+  } catch (err) {
+    els.peError.textContent = err.message;
+    els.peError.hidden = false;
+  } finally {
+    els.peSave.disabled = false;
   }
 }
 
@@ -248,8 +429,9 @@ async function open() {
   collapseAll(book.nodes || []);
   setContentOpen(false);
   setAdvOpen(false);
+  closeEditor();
   renderContentTree();
-  markSelected();
+  await loadPalettes();
   els.liteCheckbox.checked = false;   // opt-in each time — default export unless asked otherwise
   els.pagesNumberCheckbox.checked = false;
   els.diagramsImagesCheckbox.checked = false;

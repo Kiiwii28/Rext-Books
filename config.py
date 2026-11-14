@@ -180,6 +180,40 @@ def format_blurb(topic: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
+#  Custom export palettes (user-created in the Export dialog; global, not     #
+#  per-book, so a palette made once is available to every book)               #
+# --------------------------------------------------------------------------- #
+
+def get_custom_palettes() -> dict:
+    with _lock:
+        return dict(_read_settings().get("customPalettes") or {})
+
+
+def save_custom_palette(key: str, palette: dict) -> None:
+    with _lock:
+        data = _read_settings()
+        customs = dict(data.get("customPalettes") or {})
+        customs[key] = palette
+        data["customPalettes"] = customs
+        _write_settings(data)
+
+
+def delete_custom_palette(key: str) -> bool:
+    with _lock:
+        data = _read_settings()
+        customs = dict(data.get("customPalettes") or {})
+        if key not in customs:
+            return False
+        del customs[key]
+        if customs:
+            data["customPalettes"] = customs
+        else:
+            data.pop("customPalettes", None)
+        _write_settings(data)
+        return True
+
+
+# --------------------------------------------------------------------------- #
 #  Pexels API key (optional — powers the image-search tab's stock-photo       #
 #  fallback; Wikimedia Commons search works with no key at all)               #
 # --------------------------------------------------------------------------- #

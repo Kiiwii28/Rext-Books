@@ -34,6 +34,13 @@ export const renderMarkdown = (text) =>
   }).then(j).then((d) => d.html);
 
 export const getPalettes = () => fetch("/api/palettes").then(j);
+export const createPalette = (palette) =>
+  fetch("/api/palettes", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(palette),
+  }).then(j);
+export const deletePalette = (key) =>
+  fetch(`/api/palettes/${encodeURIComponent(key)}`, { method: "DELETE" }).then(j);
 export const getHealth = () => fetch("/health").then(j);
 
 export const getSettings = () => fetch("/api/settings").then(j);

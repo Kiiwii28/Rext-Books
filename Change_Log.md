@@ -9,6 +9,142 @@ From 2026-09-20 onward, entries are logged at the time each change is made.
 
 ---
 
+## 2026-10-05
+
+**EPUB validity investigation (no code changes).** User reported that every
+EPUB from the app fails to upload to Google Play Books: it processes for a
+long time, then fails. Exported their real "Business Management" book (a
+read-only copy in a scratch `BOOKS_DIR`, settings file redirected): 20.3 MB
+EPUB from 18.2 MB of images (69 files, largest 1.5 MB), 188 files, chapter
+XHTML files at most ~65 KB. Size looks very unlikely to be the cause.
+
+Ran W3C EPUBCheck 5.1.0 (with a portable JRE, both downloaded into the
+scratchpad only): **0 fatal, 3 errors, 1 warning.**
+- **ERROR RSC-005, duplicate IDs.** Each section's Markdown is rendered
+  separately, and the `toc` extension slugs headings per section. When a
+  chapter's sections are concatenated into one `chN.xhtml`, recurring
+  headings collide: `id="summary"` had 59 extra copies and
+  `what-this-means-for-you-as-a-strategist` had 22. Only heading IDs collide
+  (no footnote IDs in this book). Nav links target node anchors, so
+  navigation isn't broken; the file is just invalid. EPUBCheck reports it
+  once per affected file, hence 3 errors.
+- **WARNING OPF-085, invalid UUID.** `dc:identifier` is
+  `urn:uuid:<32 hex chars>`, the raw book id with no dashes, but a `urn:uuid`
+  must be 8-4-4-4-12 formatted.
+
+Everything else passed: mimetype first and stored, manifest complete, no
+broken references, no remote resources, image media types match the actual
+bytes, and all XML is well-formed. A separate cosmetic issue spotted while
+reading `epub.py`: `_xmlify`'s `&`-escaping turns any named HTML entity
+(e.g. `&nbsp;`, which Chrome's DOM serialisation emits for U+00A0) into
+visible literal text. Not present in this book.
+
+Not fixed yet; reported to the user with the fixes (dedupe or prefix
+heading IDs per chapter, and format the UUID properly) and a suggested
+small-EPUB upload test to tell a file problem apart from a Play Books-side
+one.
+
+---
+
+**Custom export colour palettes.** A dashed "+ New palette" tile now follows
+the last palette in the Export dialog. It opens an inline editor: a name
+field, one row per palette role (Background, Body text, Headings, Accent,
+Muted — each with a short description of what it colours in the export), a
+native colour picker plus a synced hex field per role, and a live mini-page
+preview. The editor starts from whichever palette is currently selected.
+Saving selects the new palette. Custom palettes get a red ✕ at their
+top-right corner on hover (always visible on touch screens, where there's no
+hover); built-ins never do. Deleting asks for confirmation, and if the
+deleted palette was selected the book falls back to "Popular". Escape closes
+the editor first, then the dialog.
+
+- **Storage**: global, in `local_settings.json` under `customPalettes`
+  (`config.get_custom_palettes` / `save_custom_palette` /
+  `delete_custom_palette`), not per book, so a palette made once is
+  available to every book. Keys are `custom-<10 hex>` so they can never
+  collide with a built-in.
+- **One integration point**: `palettes.get()` now resolves custom keys, and
+  every export path already goes through it (PDF via the `/preview` render,
+  EPUB, running-header and page-number stamping). No export code changed.
+  An unknown or deleted custom key falls back to the default palette rather
+  than erroring.
+- **Validation** (`palettes._clean`): every role must be strict `#RRGGBB`.
+  This is load-bearing: the values are interpolated straight into export CSS,
+  and the exports append alpha suffixes like `{accent}22`, which a 3-digit
+  hex would turn into invalid CSS. Labels are stripped and capped at 40
+  chars; max 50 custom palettes. Stored palettes are re-validated on every
+  read too, since `local_settings.json` is a hand-editable file.
+- **XSS**: the old swatch renderer built tiles with `innerHTML` including
+  `p.label`, harmless for hard-coded names but an injection hole once names
+  are user-typed. Tiles are now built with `createElement`/`textContent`.
+- **Ordering**: Flask sorts JSON object keys by default, so custom palettes
+  would have landed alphabetically mid-grid. The API marks them
+  `custom: true` with a `created` timestamp, and the client orders built-ins
+  first, then customs oldest-first, then "+".
+- Palettes are re-fetched each time the dialog opens, so one created in
+  another tab shows up.
+- **API**: `GET /api/palettes` (built-ins + customs), `POST /api/palettes`
+  (201, or 400 with a readable reason), `DELETE /api/palettes/<key>` (400 for
+  a built-in, 404 for unknown).
+
+Verified on an isolated server (scratch `BOOKS_DIR`, and
+`config._SETTINGS_FILE` redirected to a scratch file, because palettes live
+in the settings file, not the books dir; the real `local_settings.json` hash
+was confirmed unchanged afterwards). 17/17 API checks passed, including
+rejecting a CSS-injection attempt, 3-digit hex, missing roles, a blank name,
+and deletion of a built-in, plus custom colours (and alpha-suffixed variants)
+appearing in the real export HTML. Headless-Chrome UI test: "+" is always
+last; built-ins have no ✕; editor rows prefill from the selected palette;
+hex ↔ picker ↔ preview stay in sync; invalid hex is flagged and reverts on
+blur; Escape closes only the editor; a name containing `<b>` renders as
+literal text; the ✕ is invisible until hover; two customs stay in creation
+order; deleting the selected one falls back to Popular; deletion persists.
+Screenshots checked in both dark and light themes. One fix came out of that:
+role descriptions were truncated with an ellipsis, so they now wrap. A real
+PDF export with a custom dark palette and page numbers rendered correctly
+(3 pages, 4 outline entries, cover in the custom colours).
+
+Synced all 8 changed files to `dist-portable/Rextbooks/` (hash-verified).
+The production server on port 5000 was the user's own `python app.py`
+terminal process, so it was left for the user to restart rather than killed.
+
+---
+
+## 2026-10-02
+
+**Portable build verification (no code changes).** User asked to "recompile"
+`dist-portable/Rextbooks/` and confirm it's current. Hash-compared every
+root `.py` file plus everything under `static/js`, `static/css`, and
+`templates/` against the main tree (byte-for-byte, via `hashlib.sha256` —
+not a line-count/timestamp check) — all already identical, since this
+session's fixes (the image-rendering saga's `ai-dock.js`/`block.js` changes,
+and `app.py`/`images.py`/`prompts.py` for the hallucinated-image-tag fix)
+were copied over incrementally as they were made. Confirmed `pylibs`
+satisfies every `requirements.txt` pin (Flask 3.1.3, Markdown 3.10.3,
+requests 2.34.2, python-dotenv 1.2.3, Pillow 12.3.0, pypdf 6.19.0, reportlab
+5.0.1 — all well above the stated minimums). Then actually ran the portable
+build's own embedded interpreter (`dist-portable/Rextbooks/python/python.exe`,
+not the project's dev `.venv`) against a scratch `BOOKS_DIR`, and fetched
+`/`, `/api/books`, and the two most-recently-fixed static files over real
+HTTP — confirmed `block.js` serves the retry-before-placeholder logic and
+`ai-dock.js` serves the `waitForBlockImages` fix, not stale copies. Portable
+build is confirmed current; nothing needed copying this time.
+
+(Mid-task note: the Bash tool's shell lost its PATH to Git-for-Windows'
+Unix tools partway through this check — `diff`, `grep`, `mkdir`, `curl`,
+`ls`, `sleep` all started failing with "command not found" for no apparent
+reason, which **silently produced false-positive "DIFFERS" results** in an
+early `diff`-based comparison loop, since `! diff -q ... > /dev/null 2>&1`
+reports true both when files differ *and* when `diff` itself fails to run.
+Caught by cross-checking with a `hashlib`-based Python comparison instead,
+which gave a clean, trustworthy answer. Switched to the PowerShell tool for
+the rest of the task once Bash's coreutils access proved unreliable —
+worth remembering: an empty-diff result from a shell loop like that isn't
+trustworthy on its own if the shell's own tool availability hasn't been
+verified first.)
+
+---
+
 ## 2026-09-29
 
 **Actual root cause found — the three fixes below were chasing the wrong

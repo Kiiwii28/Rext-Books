@@ -1305,7 +1305,89 @@ body.is-resizing-y, body.is-resizing-y * { cursor: ns-resize !important; user-se
 .swatch.selected { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
 .sw-strip { display: flex; height: 26px; border-radius: 6px; overflow: hidden; border: 1px solid var(--line); }
 .sw-strip i { flex: 1; }
-.sw-name { font-size: 11.5px; font-weight: 600; color: var(--ink-soft); text-align: left; }
+.sw-name {
+  font-size: 11.5px; font-weight: 600; color: var(--ink-soft); text-align: left;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* Wrapper so a custom palette can carry its own delete button alongside
+   (not inside) the swatch button. */
+.swatch-wrap { position: relative; display: flex; min-width: 0; }
+.swatch-wrap > .swatch { flex: 1; min-width: 0; }
+.sw-del {
+  position: absolute; top: -7px; right: -7px; z-index: 1;
+  width: 20px; height: 20px; padding: 0; border-radius: 50%;
+  display: grid; place-items: center;
+  font-size: 10px; line-height: 1; cursor: pointer;
+  color: #fff; background: var(--err); border: 2px solid var(--glass-solid);
+  box-shadow: var(--shadow-sm);
+  opacity: 0; transform: scale(.8); pointer-events: none;
+  transition: opacity .12s ease, transform .12s ease;
+}
+.swatch-wrap.is-custom:hover .sw-del,
+.swatch-wrap.is-custom:focus-within .sw-del { opacity: 1; transform: none; pointer-events: auto; }
+.sw-del:hover { filter: brightness(1.08); }
+/* No hover on touch screens — keep the delete control reachable there. */
+@media (hover: none) {
+  .swatch-wrap.is-custom .sw-del { opacity: 1; transform: none; pointer-events: auto; }
+}
+
+.swatch-add {
+  align-items: center; justify-content: center;
+  border-style: dashed; background: transparent; color: var(--ink-soft);
+}
+.swatch-add:hover, .swatch-add.is-active { border-color: var(--accent); color: var(--accent); }
+.swatch-add .sw-add-plus { font-size: 22px; line-height: 26px; height: 26px; font-weight: 300; }
+.swatch-add .sw-name { color: inherit; text-align: center; }
+
+/* ---------- custom palette editor ---------- */
+.palette-editor {
+  margin-top: 10px; padding: 12px;
+  border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
+  background: var(--glass-hi);
+  display: flex; flex-direction: column; gap: 10px;
+}
+.pe-title { font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-soft); }
+.pe-name {
+  width: 100%; box-sizing: border-box; padding: 7px 10px; font: inherit;
+  border: 1px solid var(--line-strong); border-radius: 8px; background: var(--glass-solid); color: var(--ink);
+}
+.pe-name:focus { outline: none; border-color: var(--accent); }
+.pe-body { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 12px; align-items: start; }
+@media (max-width: 560px) { .pe-body { grid-template-columns: minmax(0, 1fr); } }
+.pe-roles { display: flex; flex-direction: column; gap: 6px; }
+.pe-role { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.pe-color {
+  flex: 0 0 auto; width: 34px; height: 34px; padding: 2px; cursor: pointer;
+  border: 1px solid var(--line-strong); border-radius: 8px; background: var(--glass-solid);
+}
+.pe-color::-webkit-color-swatch-wrapper { padding: 0; }
+.pe-color::-webkit-color-swatch { border: none; border-radius: 5px; }
+.pe-color::-moz-color-swatch { border: none; border-radius: 5px; }
+.pe-role-text { flex: 1; min-width: 0; display: flex; flex-direction: column; cursor: pointer; }
+.pe-role-label { font-size: 12.5px; font-weight: 600; color: var(--ink); }
+.pe-role-hint { font-size: 11px; line-height: 1.3; color: var(--ink-faint); }
+.pe-hex {
+  flex: 0 0 auto; width: 76px; padding: 5px 7px; box-sizing: border-box;
+  font: 12px var(--mono); text-transform: uppercase;
+  border: 1px solid var(--line-strong); border-radius: 7px; background: var(--glass-solid); color: var(--ink);
+}
+.pe-hex:focus { outline: none; border-color: var(--accent); }
+.pe-hex.is-invalid { border-color: var(--err); }
+
+/* Live mini-page, coloured by the --pe-* properties export-panel.js sets. */
+.pe-preview {
+  padding: 12px 13px; border-radius: 8px; border: 1px solid var(--line-strong);
+  background: var(--pe-bg, #fff); color: var(--pe-text, #222);
+  font-family: Georgia, "Times New Roman", serif; font-size: 12px; line-height: 1.45;
+}
+.pe-p-heading { font-family: var(--font); font-weight: 700; font-size: 15px; color: var(--pe-heading, #111); }
+.pe-p-rule { height: 2px; margin: 4px 0 8px; background: var(--pe-accent, #36c); }
+.pe-p-text { margin: 0 0 6px; }
+.pe-p-link { color: var(--pe-accent, #36c); text-decoration: underline; }
+.pe-p-muted { margin: 0; font-style: italic; font-size: 11px; color: var(--pe-muted, #777); }
+.pe-error { margin: 0; font-size: 12px; color: var(--err); }
+.pe-foot { display: flex; justify-content: flex-end; gap: 8px; }
 
 /* ---------- tutorial tour ---------- */
 /* Full-viewport click-swallower — invisible, always covers the whole

@@ -120,7 +120,25 @@ def render():
 
 @app.get("/api/palettes")
 def api_palettes():
-    return jsonify(palettes.PALETTES)
+    return jsonify(palettes.all_palettes())
+
+
+@app.post("/api/palettes")
+def api_create_palette():
+    try:
+        key, palette = palettes.create_custom(request.get_json(silent=True) or {})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"key": key, "palette": palette}), 201
+
+
+@app.delete("/api/palettes/<key>")
+def api_delete_palette(key: str):
+    if key in palettes.PALETTES:
+        return jsonify({"error": "Built-in palettes can't be deleted."}), 400
+    if not palettes.delete_custom(key):
+        return jsonify({"error": "No such custom palette."}), 404
+    return jsonify({"ok": True})
 
 
 @app.get("/api/spark-modes")

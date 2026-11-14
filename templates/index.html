@@ -234,6 +234,26 @@
         <div class="field" id="palette-field">
           <span class="field-label">Colour palette</span>
           <div id="palette-grid" class="palette-grid"></div>
+
+          <div id="palette-editor" class="palette-editor" hidden>
+            <div class="pe-title">New palette</div>
+            <input id="pe-name" class="pe-name" type="text" maxlength="40"
+                   placeholder="Palette name" autocomplete="off" />
+            <div class="pe-body">
+              <div id="pe-roles" class="pe-roles"></div>
+              <div id="pe-preview" class="pe-preview" aria-hidden="true">
+                <div class="pe-p-heading">Chapter heading</div>
+                <div class="pe-p-rule"></div>
+                <p class="pe-p-text">Body text reads like this, with a <span class="pe-p-link">link</span> in the accent colour.</p>
+                <p class="pe-p-muted">A caption or secondary note</p>
+              </div>
+            </div>
+            <p id="pe-error" class="pe-error" hidden></p>
+            <div class="pe-foot">
+              <button type="button" id="pe-cancel" class="btn ghost sm">Cancel</button>
+              <button type="button" id="pe-save" class="btn primary sm">Save palette</button>
+            </div>
+          </div>
         </div>
 
         <div class="ai-advanced" id="export-advanced">
