@@ -10,9 +10,33 @@ from __future__ import annotations
 
 import os
 import shutil
+import signal
 import subprocess
 import tempfile
+import threading
 from pathlib import Path
+
+# Flags every launch gets. The first one is the important one in a container:
+# Docker's /dev/shm defaults to 64 MB, and Chromium uses it heavily — exports on
+# a small hosted instance crash or get OOM-killed without this. The rest just
+# stop Chromium doing background work that costs memory and time in a
+# throwaway, single-shot render.
+_MEMORY_FLAGS = [
+    "--disable-dev-shm-usage",
+    "--disable-extensions",
+    "--disable-background-networking",
+    "--disable-sync",
+    "--disable-default-apps",
+    "--mute-audio",
+    "--metrics-recording-only",
+]
+
+# One browser at a time. Each launch costs a few hundred MB, so two exports
+# running together (two tabs, or a retry alongside a fresh request) is the
+# fastest way to exhaust a small instance: acquiring this lock makes the second
+# one queue instead of doubling the peak. Only exports/previews that shell out
+# to Chromium take it, so ordinary page loads and AI streams never wait.
+_BROWSER_LOCK = threading.Lock()
 
 _WIN = [
     r"C:\Program Files\Google\Chrome\Application\chrome.exe",
@@ -54,6 +78,31 @@ def _default_timeout() -> int:
     return config.PDF_RENDER_TIMEOUT
 
 
+def _run(build: list[str], timeout: int) -> subprocess.CompletedProcess:
+    """Run one command line with a hard timeout, cleaning up properly.
+
+    ``subprocess.run(timeout=...)`` kills only the process it started, and
+    Chromium is a tree of processes (zygote + renderer + GPU) — the children
+    survive a timeout and keep the memory they were using, which on a small
+    hosted instance is how one slow export turns into a dead service. On POSIX
+    the browser is started in its own session so the whole group can be
+    killed; Windows has no equivalent, so it keeps the plain behaviour."""
+    if os.name == "nt":
+        return subprocess.run(build, capture_output=True, timeout=timeout)
+    proc = subprocess.Popen(build, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, start_new_session=True)
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except OSError:
+            proc.kill()
+        out, err = proc.communicate()
+        raise subprocess.TimeoutExpired(build, timeout, output=out, stderr=err)
+    return subprocess.CompletedProcess(build, proc.returncode, out, err)
+
+
 def _run_with_retry(build_cmd, *, timeout: int, retries: int, prefix: str,
                     check) -> subprocess.CompletedProcess:
     """Run a headless-Chrome subprocess, retrying on a timeout or crash —
@@ -72,7 +121,8 @@ def _run_with_retry(build_cmd, *, timeout: int, retries: int, prefix: str,
         with tempfile.TemporaryDirectory(prefix=prefix) as d:
             cmd, out_path = build_cmd(Path(d))
             try:
-                proc = subprocess.run(cmd, capture_output=True, timeout=timeout)
+                with _BROWSER_LOCK:
+                    proc = _run(cmd, timeout)
                 check(proc, out_path)
                 return proc
             except (subprocess.TimeoutExpired, RuntimeError) as exc:
@@ -101,6 +151,7 @@ def url_to_pdf(url: str, *, timeout: int | None = None, retries: int = 1) -> byt
             "--disable-gpu",
             "--no-sandbox",
             "--no-first-run",
+            *_MEMORY_FLAGS,
             f"--user-data-dir={d / 'profile'}",
             "--no-pdf-header-footer",           # drop the date / title / URL chrome
             "--print-to-pdf-no-header",         # older flag name, harmless if unknown
@@ -147,6 +198,7 @@ def dump_rendered_dom(url: str, *, timeout: int | None = None, retries: int = 1)
             "--disable-gpu",
             "--no-sandbox",
             "--no-first-run",
+            *_MEMORY_FLAGS,
             f"--user-data-dir={d / 'profile'}",
             "--run-all-compositor-stages-before-draw",
             "--virtual-time-budget=25000",
@@ -192,6 +244,7 @@ def screenshot_html(html: str, width: int, height: int, *, timeout: int = 30,
             "--disable-gpu",
             "--no-sandbox",
             "--no-first-run",
+            *_MEMORY_FLAGS,
             f"--user-data-dir={d / 'profile'}",
             f"--window-size={width},{height}",
             "--hide-scrollbars",

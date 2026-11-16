@@ -9,6 +9,104 @@ From 2026-09-20 onward, entries are logged at the time each change is made.
 
 ---
 
+## 2026-11-16 (later still)
+
+**Export memory tuning for small hosted instances** (`pdfgen.py`,
+`experiments/render/README.md`). No behaviour change locally beyond exports
+queueing instead of running two browsers at once.
+
+- `_MEMORY_FLAGS` are now passed to all three headless launches (PDF,
+  `--dump-dom`, screenshot). The decisive one is `--disable-dev-shm-usage`:
+  Docker's `/dev/shm` is 64 MB by default, which Chromium uses heavily, so
+  exports on a 512 MB instance crash or get OOM-killed without it.
+- `_BROWSER_LOCK` serialises browser launches, so a second export/preview
+  waits instead of starting a second Chromium and doubling peak memory.
+  Verified: two PDF exports requested concurrently complete in 4.0 s and
+  7.6 s (wall 7.6 s) — one queued, exactly as intended. PDF (125 KB, `%PDF`),
+  EPUB (valid zip) and the Pages zip (with a rasterized diagram) all still
+  export correctly.
+- `_run()` replaces the bare `subprocess.run(timeout=…)`: on POSIX the browser
+  starts in its own session and the whole process group is SIGKILLed on
+  timeout, because killing only the parent left zygote/renderer children
+  holding their memory — one slow export could otherwise poison the instance.
+  Windows keeps the plain path (no process-group equivalent).
+- `experiments/render/README.md` gained a "Tuning a small instance" section:
+  which symptom a longer timeout fixes (504/slow) versus one it can't (OOM),
+  the serialisation and flags above, then Lite export → export chapters →
+  `--threads 4` → bigger plan, and the optional `--max-requests` recycle.
+
+## 2026-11-16 (night)
+
+**Mermaid reliability: prompt rewritten as a format convention, and the
+renderer made resilient to a single failure.**
+
+- **`prompts.defaults.json` — `content.defaults.diagram_compact` rewritten.**
+  It was a list of bans ("never use packet-beta, kanban, …", "never use ->-")
+  that a small model obeys unreliably. It is now a *shape* to copy: one
+  sentence of format (fence info string exactly `mermaid`, one type
+  declaration, one indented statement per line), then two fully worked
+  examples (`flowchart TD`, `mindmap`), then a condensed one-line skeleton
+  for each of the other 15 verified types, then the shared rules (plain-word
+  labels, `-->` / `->>` arrows only, ~10-12 items per diagram, vary the
+  type), and finally — as a single factual sentence, not a block of
+  prohibitions — the six type names that don't exist in Mermaid 10.9.1.
+  `spark.defaults.diagram_size` got the same treatment in a shorter form.
+- **Verified**: all 17 recommended types render under `mermaid@10.9.1` with
+  the exact syntax the prompt now documents (17/17 OK). A real Gemini
+  generation ("Supply chain risk", High length, High diagram frequency)
+  produced **8 diagrams across 5 different types** (mindmap ×2,
+  flowchart TD ×2, xychart-beta, sequenceDiagram ×2, quadrantChart) and
+  **8/8 rendered** — previously this was the exact case that produced a
+  mindmap error box.
+- **`static/js/mermaid-render.js` — no failure caching, serialised renders,
+  retries.** Root cause of "the same diagram renders on reload but not
+  during generation": renders ran concurrently (`Promise.all` over blocks)
+  and a failed render was cached as `svgCache.set(code, null)`, so one
+  transient failure during streaming stayed broken for the life of the page
+  even though the source was valid. Now: an `enqueue()` promise chain runs
+  renders one at a time; only successes are cached; a failure logs
+  `console.warn("[mermaid] render failed", …)` with the offending source,
+  retries up to 2× after 700 ms, and leaves a click-to-retry box
+  (`title` + `pre.dataset.mmdClick`) instead of a dead error.
+- **Verified**: a section with one deliberately malformed `pie` plus one
+  valid `flowchart` shows 1 error box + 1 rendered SVG (the failure no
+  longer takes its neighbours with it), warns on each attempt, retries, and
+  the click path re-attempts.
+- **Layout clipping hardening** (`static/css/style.css`, `static/js/resize.js`).
+  The AI pane's remembered drag width (up to 760px) was used as a *hard
+  grid max*, so after dragging the divider wide the two columns could be
+  wider than the window — and because `body` is `height:100vh;
+  overflow:hidden` there was no scrollbar to reach the rest, which clips the
+  right-hand panel at any zoom level. The track is now
+  `minmax(280px, min(var(--ai-pane-w, 384px), 46vw))` and
+  `mountPaneResizer()` clamps the stored width on startup. Verified at
+  1400/1100/950/860px with a deliberately over-wide stored value: no
+  horizontal overflow at any of them (860px folds to the stacked layout).
+- **The "app cuts short while generating" bug — root cause found and fixed**
+  (`static/js/mermaid-render.js`). Mermaid mounts each render in a temporary
+  `<div id="dmmd-…">` appended to `<body>` and normally removes it again; a
+  render that *throws* (or two that overlap) leaves it behind. Those leftovers
+  are ordinary in-flow elements, so they stacked **below** `.workspace` inside
+  the `body` flex column and squeezed the workspace: measured on a real book,
+  three leftovers took 338px and the panes shrank from ~765px to 427px tall.
+  Every diagram rendered therefore made the UI shorter, and because the page
+  can't scroll there was no way to reach the rest — which is why zooming
+  didn't help. `sweepStrayRenderings()` now removes any `body > div[id^="dmmd-"]`
+  / `mmd-` after every render (success or failure) and at the start of a pass.
+  Verified: strays 3 → 0, `.workspace` bottom 522 → 860 (full window), pane
+  heights 427 → 713/765, with 3 diagrams rendered and 0 errors.
+- **`xychart-beta` axis repair** (`rendering.py`, `_clean_xychart_axis`).
+  A real saved diagram in the user's own book failed with "Lexical error …
+  Unrecognized text" because its axis was `x-axis [0%, 20%, 40%]` — the
+  bracket form is a band scale and rejects `%`. The symbols are never
+  meaningful to Mermaid, so `_repair_mermaid_source` now strips punctuation
+  from `x-axis [...]` labels (quoting anything with a space) for
+  `xychart-beta`. That diagram now renders without being edited; verified the
+  repaired form plus a currency-label variant both render under 10.9.1.
+- Synced `prompts.defaults.json`, `rendering.py`, `static/js/mermaid-render.js`,
+  `static/js/resize.js` and `static/css/style.css` into
+  `dist-portable/Rextbooks/`.
+
 ## 2026-11-16 (late)
 
 **Added an isolated Render deployment experiment (no application code touched).**

@@ -68,11 +68,31 @@ _MAYBE_MERMAID_FENCE = re.compile(
 _MERMAID_PRE = re.compile(r'(<pre class="mermaid">)(.*?)(</pre>)', re.DOTALL)
 _UNQUOTED_SINGLE_ARROW = re.compile(r"(?<![-.<>=])\s*->\s*(?![-.>])")
 
+# xychart-beta's bracket form is a band scale: every label has to be a bare
+# word or number, so a realistic-looking axis such as [0%, 20%, 40%] is a hard
+# parse error ("Lexical error ... Unrecognized text") — and a model writing a
+# percentage chart reaches for exactly that. The symbol is never meaningful to
+# Mermaid (it renders its own ticks), so strip the punctuation and quote any
+# label that still contains a space.
+_XYCHART_AXIS = re.compile(r"(x-axis\s*)\[([^\]]*)\]", re.I)
+
+
+def _clean_xychart_axis(m: re.Match) -> str:
+    labels = []
+    for part in m.group(2).split(","):
+        label = re.sub(r"[^\w\s.\-]", "", part.strip().strip('"').strip()).strip()
+        if not label:
+            continue
+        labels.append(f'"{label}"' if " " in label else label)
+    return f"{m.group(1)}[{', '.join(labels)}]"
+
 
 def _repair_mermaid_source(src: str) -> str:
     head = src.strip().split(None, 1)[0].lower() if src.strip() else ""
     if head == "sequencediagram":
         return src.replace("->-", "->>").replace("--->", "-->>")
+    if head == "xychart-beta":
+        return _XYCHART_AXIS.sub(_clean_xychart_axis, src)
     if head.startswith(("flowchart", "graph", "statediagram", "classdiagram")):
         out = []
         for line in src.splitlines():

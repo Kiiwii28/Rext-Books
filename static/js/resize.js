@@ -25,6 +25,10 @@ export function mountPaneResizer() {
     document.documentElement.style.setProperty("--ai-pane-w", w + "px");
     return w;
   }
+
+  // Clamp the remembered width straight away: a value saved on a wide window
+  // must not clip the panel on a narrow one (the page can't scroll sideways).
+  apply(currentWidth());
   function persist(w) {
     try { localStorage.setItem(AI_W_KEY, String(w)); } catch {}
   }

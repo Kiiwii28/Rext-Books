@@ -334,7 +334,11 @@ body {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(320px, 1fr) 14px minmax(300px, var(--ai-pane-w, 384px));
+  /* The AI pane's max is capped against the viewport as well as the stored
+     drag width: a remembered wide pane (up to 760px) used to make the two
+     columns wider than the window, and because the page itself can't scroll
+     that silently clipped the right-hand panel at any zoom level. */
+  grid-template-columns: minmax(300px, 1fr) 14px minmax(280px, min(var(--ai-pane-w, 384px), 46vw));
   gap: 0;
   padding: 14px;
 }

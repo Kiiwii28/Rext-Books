@@ -6,7 +6,17 @@ const MERMAID_URL = "https://cdn.jsdelivr.net/npm/mermaid@10.9.1/+esm";
 let mermaid = null;
 let loading = null;
 let idc = 0;
-const svgCache = new Map();   // diagram source -> rendered SVG (or null on error)
+const svgCache = new Map();   // diagram source -> rendered SVG (successes only)
+
+// Two passes can run at once in practice — the block that is streaming and the
+// full tree re-render that happens when generation finishes — and Mermaid's
+// renderer keeps global state, so calls are serialised through one chain.
+let chain = Promise.resolve();
+function enqueue(fn) {
+  const run = chain.then(fn, fn);
+  chain = run.then(() => {}, () => {});
+  return run;
+}
 
 function themeVars() {
   const s = getComputedStyle(document.documentElement);
@@ -70,10 +80,24 @@ function fitSvg(pre) {
   s.style.maxHeight = "72vh";
 }
 
+// Mermaid renders each diagram inside a temporary <div id="dmmd-…"> appended to
+// <body>, and normally removes it again. A render that throws — or two that
+// overlap — can leave that node behind, and it is a real element in normal
+// flow: it stacks *below* the app's flex layout, so the page (which can't
+// scroll) squeezes the outline and AI panes shorter. Visually the whole UI
+// "cuts short" and keeps shrinking with every diagram rendered. Sweep them.
+function sweepStrayRenderings() {
+  const strays = document.body.querySelectorAll(
+    ':scope > div[id^="dmmd-"], :scope > div[id^="mmd-"]');
+  for (const el of strays) el.remove();
+}
+
 /** Render every not-yet-done <pre.mermaid> inside `root`. */
 export async function renderMermaidIn(root) {
   const blocks = root.querySelectorAll("pre.mermaid:not([data-mmd])");
   if (!blocks.length) return;
+
+  sweepStrayRenderings();
 
   const mm = await ensureMermaid();
   if (!mm) return;   // offline / blocked — leave the source visible
@@ -83,24 +107,46 @@ export async function renderMermaidIn(root) {
     if (!code) continue;
     pre.dataset.mmd = "1";
 
-    if (svgCache.has(code)) {
-      const cached = svgCache.get(code);
-      if (cached) { pre.innerHTML = cached; pre.classList.add("rendered"); fitSvg(pre); }
-      else { pre.classList.add("mermaid-error"); delete pre.dataset.mmd; }
+    const cached = svgCache.get(code);
+    if (cached) {
+      pre.innerHTML = cached;
+      pre.classList.add("rendered");
+      fitSvg(pre);
       continue;
     }
 
-    try {
-      const { svg } = await mm.render(`mmd-${Date.now()}-${idc++}`, code);
-      svgCache.set(code, svg);
-      pre.innerHTML = svg;
-      pre.classList.add("rendered");
-      pre.classList.remove("mermaid-error");
-      fitSvg(pre);
-    } catch {
-      svgCache.set(code, null);
-      pre.classList.add("mermaid-error");
-      delete pre.dataset.mmd;   // let a later (complete) render retry
-    }
+    // Failures are deliberately NOT cached: a render can fail for a transient
+    // reason (a re-render racing the DOM move, a font not loaded yet), and a
+    // cached failure made one bad moment permanent for that diagram.
+    await enqueue(async () => {
+      try {
+        const { svg } = await mm.render(`mmd-${Date.now()}-${idc++}`, code);
+        svgCache.set(code, svg);
+        pre.innerHTML = svg;
+        pre.classList.add("rendered");
+        pre.classList.remove("mermaid-error");
+        fitSvg(pre);
+      } catch (err) {
+        console.warn("[mermaid] render failed", err, code.slice(0, 300));
+        pre.classList.add("mermaid-error");
+        delete pre.dataset.mmd;                  // allow the next pass to retry
+        const tries = Number(pre.dataset.mmdTries || 0) + 1;
+        pre.dataset.mmdTries = String(tries);
+        if (tries <= 2) setTimeout(() => renderMermaidIn(root), 700);
+        if (!pre.dataset.mmdClick) {
+          // Clicking the error box retries immediately — a diagram that failed
+          // once (e.g. mid-generation) should never be stuck forever.
+          pre.dataset.mmdClick = "1";
+          pre.title = "Click to try rendering this diagram again";
+          pre.addEventListener("click", () => {
+            pre.classList.remove("mermaid-error");
+            delete pre.dataset.mmd;
+            renderMermaidIn(root);
+          });
+        }
+      } finally {
+        sweepStrayRenderings();
+      }
+    });
   }
 }

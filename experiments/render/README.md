@@ -117,6 +117,40 @@ Use **Logs** in the dashboard during each export; the app prints export and
 image-resolution progress to stderr, so a cut-off log is the clearest OOM
 signal.
 
+### Tuning a small instance (what actually helps)
+
+Timeouts and concurrency fix *different* failure modes — worth knowing which
+one you have before changing anything:
+
+| Symptom | Cause | Does a longer timeout help? |
+| --- | --- | --- |
+| Export returns 504 "timed out (tried twice)" | 0.1 CPU is simply slow | Yes — raise `REXTBOOKS_PDF_TIMEOUT` |
+| Page 502s / service restarts / logs stop mid-export | Out of memory | **No** — it was killed, not slow |
+
+For out-of-memory, concurrency is the lever, and *less* of it is the fix:
+
+- **Exports are serialised inside the app** (`pdfgen._BROWSER_LOCK`): only one
+  headless Chromium runs at a time, so a second export queues instead of
+  starting a second browser. Everything else — page loads, AI streams — is
+  unaffected. Verified locally: two PDF exports requested at once finish in
+  4.0 s and 7.6 s (one waited), wall time 7.6 s — with two browsers they would
+  have run in parallel at double the peak memory.
+- **Chromium runs container-friendly flags** (`pdfgen._MEMORY_FLAGS`), the
+  important one being `--disable-dev-shm-usage` — Docker's `/dev/shm` is 64 MB
+  by default and Chromium's renderer crashes or gets OOM-killed without it.
+- **A timed-out browser is killed as a process group** on Linux, so orphaned
+  renderer processes can't keep leaking memory after a failed attempt (a
+  retry then starts from a clean slate).
+- If it still dies, in this order: turn on **Lite** in the Export dialog (fewer
+  pixels, same layout), export **chapters separately** via "Content to
+  include", drop `--threads 8` to `--threads 4` in the Dockerfile `CMD` (fewer
+  request threads competing for the same 512 MB), and only then move to the
+  $7 (0.5 CPU) / $25 (1 CPU, 2 GB) instance.
+- `--max-requests 50 --max-requests-jitter 10` can be added to the gunicorn
+  `CMD` if memory creeps over a long uptime — it recycles the worker instead
+  of letting a slow leak accumulate. With one worker, a recycle is a brief
+  queue, not a dropped request.
+
 ---
 
 ## 5. Cleaning up
