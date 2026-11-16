@@ -9,6 +9,40 @@ From 2026-09-20 onward, entries are logged at the time each change is made.
 
 ---
 
+## 2026-11-16 (late)
+
+**Added an isolated Render deployment experiment (no application code touched).**
+Purpose: answer "does full functionality fit on Render's free 512 MB tier?"
+before committing to any hosting or stateless-port work.
+
+- **`experiments/render/Dockerfile`** — python:3.12-slim + Debian `chromium`
+  (so `pdfgen.find_browser()` finds `/usr/bin/chromium` by name, no
+  `REXTBOOKS_CHROME` needed) + Liberation/DejaVu fonts; installs the project's
+  own `requirements.txt` plus gunicorn (deployment-only, so `requirements.txt`
+  is unchanged); `COPY`s only runtime files; `BOOKS_DIR=/data/books`; runs
+  `gunicorn app:app` with `--worker-class gthread --threads 8 --timeout 1200
+  --forwarded-allow-ips="*"` (gthread so an SSE generation can stream while
+  other requests are answered; forwarded-ips so Flask builds `https://` preview
+  URLs for Chromium).
+- **`.dockerignore`** (repo root, additive) — the Render service uses Root
+  Directory = repo root so the Dockerfile can copy the app from there, which
+  makes the whole repo the build context. This keeps `.venv/`, `dist-portable/`,
+  `docs/`, `books/`, `.env`, `local_settings.json` and `prompts.local.json` out
+  of both the upload and the image.
+- **`experiments/render/README.md`** — exact Render dashboard values (Root
+  Directory blank, Runtime Docker, Dockerfile Path, build context blank, health
+  check `/health`, free instance), env vars, the test checklist, how to read an
+  OOM, and an optional `render.yaml` blueprint snippet.
+- **Validated locally**: gunicorn cannot run on Windows at all (`fcntl` import
+  fails — worth recording), so the same WSGI shape was exercised with waitress
+  (`app:app`, 8 threads, temp `BOOKS_DIR`): `/health` ok, `/render` produced
+  MathML + bold, **PDF export 200 / 81 KB valid `%PDF`**, **EPUB 200 / valid
+  zip**, and an SSE generation streamed `start` + deltas to `done` through the
+  production server with no errors. gunicorn flags themselves are standard and
+  will be exercised by the first Render build.
+- The venv was used for the waitress/gunicorn check only; both were uninstalled
+  again, so nothing was added to `requirements.txt`.
+
 ## 2026-11-16 (evening)
 
 **Feature: LaTeX math now renders (was showing raw `$…$`).** Reported with a

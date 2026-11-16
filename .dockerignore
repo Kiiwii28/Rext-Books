@@ -1,0 +1,21 @@
+# Build-context control for experiments/render/Dockerfile.
+#
+# The Render service is configured with Root Directory = repo root (so the
+# Dockerfile can COPY the app's own files), which means this whole folder is
+# the Docker build context. Without this file the context would include the
+# local virtualenv, the portable build and — worst of all — real books and
+# API keys. Nothing here is needed to *run* the app.
+.venv/
+dist-portable/
+build-assets/
+docs/
+Export-Colour-Examples/
+books/
+.git/
+__pycache__/
+*.pyc
+.env
+local_settings.json
+prompts.local.json
+error.log
+*.log
