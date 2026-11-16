@@ -9,6 +9,60 @@ From 2026-09-20 onward, entries are logged at the time each change is made.
 
 ---
 
+## 2026-11-16 (night, subtle key UI)
+
+**The key bundle moved out of the Settings body and behind a 🔑 icon.**
+
+It was a labelled field sitting above Provider, which drew every user's eye and
+invited "what is this key for?" — exactly the wrong first impression for someone
+who just wants to write a book.
+
+- The whole block is gone from `.modal-body`; the header now has
+  `<h2>⚙ Settings</h2>` on the left and a small `.modal-head-actions` group on
+  the right holding 🔑 then ✕.
+- `#settings-bundle-toggle` opens a small popover anchored under the header
+  (`.kb-popover`): paste + **Unlock** when locked, `🔑 <label>` + **Lock** plus a
+  one-line "Unlocks gemini, deepseek for this browser" when unlocked. Closes on
+  outside click, `Esc` (which does not also close Settings), or the ✕ in the
+  popover, and is always reset when Settings closes.
+- The icon is **hidden entirely** unless `keyBundle.configured` is true, so an
+  ordinary install never renders it. When a bundle is active the icon takes a
+  quiet accent tint (`.is-unlocked`) instead of a banner — a hint, not an
+  announcement.
+- Verified on a configured server: icon present at 12px muted, popover closed on
+  open, click opens it and focuses the input when locked, unlock switches to the
+  label/Unlocks view and keeps the popover open, outside-click and `Esc` close
+  only the popover, Lock returns it to the paste state, and the icon tints.
+  On a server with no bundles the button is `hidden` and never appears.
+
+## 2026-11-16 (night, bundles: switchable providers)
+
+**A key bundle no longer locks you to one provider.** If a bundle holds both a
+Gemini and a DeepSeek key, the Settings provider picker stays live and switches
+between them.
+
+- The choice is stored **in the session** (`session["provider"]`), not in
+  `local_settings.json` — otherwise one person switching to Gemini would switch
+  it for everyone else on the instance. `config.set_request_provider()` carries
+  it on the request thread, and `get_llm_provider()` resolves:
+  session choice (if the bundle has that key) → bundle's declared `provider` →
+  first available → the normal global chain.
+- `set_llm_provider()` inside a bundle now validates against
+  `bundle_providers()` and pins the session instead of raising; asking for a
+  provider the bundle has no key for still fails with a specific message
+  ("… has no DeepSeek key — it can use: Google Gemini.").
+- `key_bundle_info()` gained `availableProviders` and `modelProvider`, so the UI
+  enables exactly the providers the bundle can serve, and stops claiming a
+  pinned model once you've switched to the provider it doesn't apply to.
+- Locking clears the session choice, so a bundle user's preference never leaks
+  into the machine's own settings.
+- Verified: bundle with both keys — switch deepseek → gemini → deepseek all 200,
+  the gemini model resolved from the saved per-provider setting, key placeholder
+  followed the provider; bundle with only Gemini — DeepSeek option disabled and a
+  POST for it returns 400; two sessions on the same bundle sit on different
+  providers independently; `local_settings.json` was byte-identical before and
+  after a switch.
+
 ## 2026-11-16 (night, mobile + master keys)
 
 **1. Pages export: unique image filenames (fixes two books overwriting each

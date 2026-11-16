@@ -61,8 +61,9 @@ app.config.update(
 def _apply_key_bundle():
     """Resolve the caller's key bundle for this request only. Thread-local
     rather than global state, so two people using the same instance each keep
-    their own bundle."""
+    their own bundle — and their own provider choice within it."""
     config.set_active_bundle(session.get("bundle"))
+    config.set_request_provider(session.get("provider"))
 
 
 @app.teardown_request
@@ -145,7 +146,12 @@ def api_save_settings():
     # Provider first: a model/key sent alongside it belongs to that provider.
     try:
         if "provider" in data:
-            config.set_llm_provider(data.get("provider") or "")
+            chosen = config.set_llm_provider(data.get("provider") or "")
+            # Inside a bundle the choice belongs to this browser, not to the
+            # shared settings file — otherwise one person's switch would change
+            # everyone else's provider too.
+            if config.get_active_bundle() is not None:
+                session["provider"] = chosen
         target = data.get("provider") or config.get_llm_provider()
         if "model" in data:
             config.set_llm_model(data.get("model") or "", provider=target)
@@ -220,6 +226,7 @@ def api_settings_unlock():
 @app.post("/api/settings/lock")
 def api_settings_lock():
     session.pop("bundle", None)
+    session.pop("provider", None)   # back to this machine's own provider choice
     config.clear_active_bundle()
     return jsonify(_settings_payload())
 

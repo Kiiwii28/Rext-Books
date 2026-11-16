@@ -1275,10 +1275,44 @@ body.is-resizing-y, body.is-resizing-y * { cursor: ns-resize !important; user-se
 }
 
 /* ---------- Settings → key bundle ("master key") ---------- */
-/* Deliberately quiet: one small key glyph on the label, nothing loud, and the
-   whole block stays hidden unless the server actually has bundles set up. */
+/* Deliberately quiet: a single key icon in the panel header, and a small
+   popover on demand. Most people never need it, and a labelled field in the
+   body only invites "what is this key for?". The icon is hidden entirely
+   unless the server has bundles configured. */
+.modal-head { position: relative; }
+.modal-head-actions { display: flex; align-items: center; gap: 2px; }
+.kb-btn { font-size: 12px; opacity: .55; }
+.kb-btn:hover, .kb-btn[aria-expanded="true"] { opacity: 1; }
+/* A quiet hint that a bundle is doing the work — no banner, no row. */
+.kb-btn.is-unlocked {
+  opacity: 1;
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.kb-popover {
+  position: absolute;
+  top: calc(100% - 2px); right: 10px;
+  z-index: 4;
+  width: min(330px, calc(100vw - 60px));
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 12px;
+  background: var(--glass-solid);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md), var(--shine);
+}
+.kb-popover-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.kb-popover-title {
+  font-size: 11px; font-weight: 700; letter-spacing: .07em;
+  text-transform: uppercase; color: var(--ink-soft);
+}
+.kb-popover-close { width: 22px; height: 22px; font-size: 11px; }
+.kb-popover-note { margin: 0; font-size: 11.5px; line-height: 1.45; color: var(--ink-soft); }
+
 #settings-bundle-input {
-  flex: 1; font: inherit; font-size: 13px; padding: 8px 10px;
+  flex: 1; font: inherit; font-size: 13px; padding: 7px 9px;
   font-family: var(--mono);
   border: 1px solid var(--line-strong); border-radius: 7px;
   background: var(--glass-solid); color: var(--ink); width: 100%;
@@ -1286,12 +1320,10 @@ body.is-resizing-y, body.is-resizing-y * { cursor: ns-resize !important; user-se
 #settings-bundle-input:focus {
   outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 1px;
 }
-.key-bundle .field-label { display: flex; align-items: center; gap: 5px; }
-.kb-key { font-size: 11px; opacity: .55; letter-spacing: 0; }
-.kb-unlock { white-space: nowrap; padding: 0 12px; font-size: 12px; font-weight: 700; }
+.kb-unlock { white-space: nowrap; padding: 0 10px; font-size: 11.5px; font-weight: 700; }
 .kb-active {
   display: flex; align-items: center; justify-content: space-between;
-  gap: 8px; padding: 7px 10px;
+  gap: 8px; padding: 7px 9px;
   border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
   border-radius: 7px;
   background: color-mix(in srgb, var(--accent) 9%, var(--glass-solid));
@@ -1301,7 +1333,7 @@ body.is-resizing-y, body.is-resizing-y * { cursor: ns-resize !important; user-se
   font-size: 12.5px; color: var(--ink); min-width: 0;
 }
 .kb-badge b { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.key-bundle #settings-bundle-lock { flex: none; font-size: 11.5px; padding: 4px 9px; }
+.kb-active #settings-bundle-lock { flex: none; font-size: 11px; padding: 3px 8px; }
 
 /* ---------- Settings → Advanced: prompt text editor ---------- */
 .prompts-panel { border-top: 1px solid var(--line); padding-top: 12px; }

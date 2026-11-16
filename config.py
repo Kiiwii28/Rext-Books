@@ -328,6 +328,24 @@ def set_active_bundle(bundle_id: str | None) -> None:
     """Pin this request/thread to one bundle (called from the Flask hook that
     reads the user's session). Unknown or absent id = no bundle."""
     _ctx.bundle = bundle_id if bundle_id in _bundles() else None
+    _ctx.provider = None
+
+
+def set_request_provider(provider: str | None) -> None:
+    """The provider this request's user has picked *within* their bundle.
+
+    Kept per request/session rather than in ``local_settings.json``: two people
+    sharing a bundle on one instance must be able to use different providers at
+    the same time without overwriting each other."""
+    _ctx.provider = _clean(provider).lower() or None
+
+
+def bundle_providers() -> list[str]:
+    """Providers the unlocked bundle can actually serve, best first."""
+    bundle = get_active_bundle()
+    if bundle is None:
+        return []
+    return [p for p in _BUNDLE_LLM_KEYS if bundle["keys"].get(p)]
 
 
 def get_active_bundle() -> dict | None:
@@ -337,6 +355,7 @@ def get_active_bundle() -> dict | None:
 
 def clear_active_bundle() -> None:
     _ctx.bundle = None
+    _ctx.provider = None
 
 
 def key_bundle_info() -> dict:
@@ -345,13 +364,20 @@ def key_bundle_info() -> dict:
     bundle = get_active_bundle()
     if bundle is None:
         return {"configured": bool(_bundles()), "unlocked": False, "providers": []}
+    available = bundle_providers()
     return {
         "configured": True,
         "unlocked": True,
         "label": bundle["label"],
         "providers": [k for k in _BUNDLE_KEY_NAMES if bundle["keys"].get(k)],
-        "provider": bundle["provider"],
+        # Which LLM providers this bundle can serve — the user may switch between
+        # all of them (when there's more than one) without touching shared config.
+        "availableProviders": available,
+        "provider": get_llm_provider(),
         "model": bundle["model"],
+        # The pinned model belongs to the bundle's default provider, so the UI
+        # can stay quiet about it once the user has switched to another one.
+        "modelProvider": bundle["provider"] if bundle["model"] else "",
     }
 
 
@@ -413,11 +439,19 @@ def _normalize(name: str | None) -> str:
 
 
 def get_llm_provider() -> str:
-    """The provider in effect: an unlocked key bundle's own provider, then the
-    Settings choice, then ``LLM_PROVIDER``, then the default."""
+    """The provider in effect: an unlocked key bundle's chosen provider (the
+    user may pick any provider the bundle has a key for), then the Settings
+    choice, then ``LLM_PROVIDER``, then the default."""
     bundle = get_active_bundle()
-    if bundle is not None and bundle["provider"] in PROVIDERS:
-        return bundle["provider"]
+    if bundle is not None:
+        available = bundle_providers()
+        preferred = getattr(_ctx, "provider", None)
+        if preferred in available:
+            return preferred
+        if bundle["provider"] in available:
+            return bundle["provider"]
+        if available:
+            return available[0]
     saved = _clean(_settings_snapshot().get("llmProvider")).lower()
     saved = _PROVIDER_ALIASES.get(saved, saved)
     if saved in PROVIDERS:
@@ -436,11 +470,18 @@ def set_llm_provider(name: str) -> str:
             f"unknown provider {name!r}; expected one of {', '.join(PROVIDERS)}"
         )
     bundle = get_active_bundle()
-    if bundle is not None and key != bundle["provider"]:
-        raise RuntimeError(
-            f"The unlocked key bundle ({bundle['label']}) is set to "
-            f"{PROVIDERS[bundle['provider']]['label']} — lock it first to switch provider."
-        )
+    if bundle is not None:
+        # Switching inside a bundle is allowed for any provider it holds a key
+        # for — it only changes this session's choice, never the shared file.
+        available = bundle_providers()
+        if key not in available:
+            labels = ", ".join(PROVIDERS[p]["label"] for p in available) or "none"
+            raise RuntimeError(
+                f"The unlocked key bundle ({bundle['label']}) has no "
+                f"{PROVIDERS[key]['label']} key — it can use: {labels}."
+            )
+        set_request_provider(key)
+        return key
     with _lock:
         data = _read_settings()
         data["llmProvider"] = key

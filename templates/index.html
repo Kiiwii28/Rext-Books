@@ -381,27 +381,44 @@
     <div class="modal glass" role="dialog" aria-modal="true" aria-labelledby="settings-title">
       <div class="modal-head">
         <h2 id="settings-title">⚙ Settings</h2>
-        <button id="settings-close" class="mini-btn" aria-label="Close">✕</button>
+        <div class="modal-head-actions">
+          <!-- Key bundle ("master key"). Deliberately just an icon here rather
+               than a labelled field in the body: most users never need it, and
+               a visible "key" block invites questions. Hidden entirely unless
+               the server actually has bundles configured. -->
+          <button id="settings-bundle-toggle" class="mini-btn kb-btn" type="button"
+                  aria-label="Key bundle" aria-expanded="false" title="Key bundle" hidden>
+            🔑
+          </button>
+          <button id="settings-close" class="mini-btn" aria-label="Close">✕</button>
+        </div>
+        <div id="settings-bundle-popover" class="kb-popover" hidden>
+          <div class="kb-popover-head">
+            <span class="kb-popover-title">🔑 Key bundle</span>
+            <button id="settings-bundle-close" class="mini-btn kb-popover-close"
+                    type="button" aria-label="Close">✕</button>
+          </div>
+          <div id="settings-bundle-locked">
+            <div class="settings-key-row">
+              <input id="settings-bundle-input" type="password" placeholder="Paste your key…"
+                     autocomplete="off" spellcheck="false" />
+              <button id="settings-bundle-unlock" type="button" class="mini-btn kb-unlock">Unlock</button>
+            </div>
+            <p class="kb-popover-note">One key that fills in your provider keys at once.
+              It applies to this browser only.</p>
+          </div>
+          <div id="settings-bundle-active" hidden>
+            <div class="kb-active">
+              <span class="kb-badge">🔑 <b id="settings-bundle-label">—</b></span>
+              <button id="settings-bundle-lock" type="button" class="mini-btn">Lock</button>
+            </div>
+            <p id="settings-bundle-note" class="kb-popover-note"></p>
+          </div>
+        </div>
       </div>
 
       <div class="modal-body">
         <div id="settings-status" class="ai-status" hidden></div>
-
-        <div id="settings-bundle-field" class="field key-bundle" hidden>
-          <span class="field-label">
-            <span class="kb-key" aria-hidden="true">🔑</span> Key bundle
-          </span>
-          <div id="settings-bundle-locked" class="settings-key-row">
-            <input id="settings-bundle-input" type="password" placeholder="Paste your key…"
-                   autocomplete="off" spellcheck="false" />
-            <button id="settings-bundle-unlock" type="button" class="mini-btn kb-unlock">Unlock</button>
-          </div>
-          <div id="settings-bundle-active" class="kb-active" hidden>
-            <span class="kb-badge">🔑 <b id="settings-bundle-label">—</b></span>
-            <button id="settings-bundle-lock" type="button" class="mini-btn">Lock</button>
-          </div>
-          <p id="settings-bundle-note" class="export-note"></p>
-        </div>
 
         <div class="field">
           <span class="field-label">Provider</span>

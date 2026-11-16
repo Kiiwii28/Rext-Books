@@ -172,8 +172,11 @@ Open <http://127.0.0.1:5000>.
   (JSON, the one to use on a host) or `key_bundles.json` beside the app (gitignored).
   Each person's passcode unlocks **their own** bundle in **their own browser** — a
   signed cookie holds only an opaque bundle id, never the passcode or a key — so two
-  people on one instance don't overwrite each other. Enter it in **⚙ Settings →
-  🔑 Key bundle**; while unlocked, the fields it supplies are disabled because
+  people on one instance don't overwrite each other. A bundle that holds keys for
+  both Gemini and DeepSeek lets you **switch between them**, and that choice stays in
+  your browser rather than changing everyone else's. Enter it via the **🔑 icon
+  beside the Settings title** (a small popover, shown only when the server has
+  bundles configured); while unlocked, key fields it supplies are disabled because
   writing them would change the shared settings file. See the Render notes for the
   JSON shape and a passcode generator.
 - **Export** — **PDF** (15 palettes), **EPUB**, **Markdown**, or **JSON** (the raw

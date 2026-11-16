@@ -114,7 +114,8 @@ python -c "import secrets; print('rk-' + secrets.token_hex(16))"
 
 How it behaves:
 
-- Entering a passcode in **⚙ Settings → 🔑 Key bundle** unlocks it **for that
+- Entering a passcode via the **🔑 icon beside the Settings title** (a small
+  popover — invisible unless bundles are configured) unlocks it **for that
   browser only** (a signed cookie holding an opaque bundle id — never the
   passcode, never a key), so two people on the same instance keep their own
   keys and cannot overwrite each other's. It survives redeploys as long as

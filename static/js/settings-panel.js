@@ -74,6 +74,20 @@ export async function mountSettings(refs) {
   els.bundleInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") { e.preventDefault(); onUnlockBundle(); }
   });
+  els.bundleToggle.addEventListener("click", () => toggleBundlePopover());
+  els.bundlePopoverClose.addEventListener("click", () => toggleBundlePopover(false));
+  document.addEventListener("click", (e) => {
+    if (els.bundlePopover.hidden) return;
+    if (!els.bundlePopover.contains(e.target) && !els.bundleToggle.contains(e.target)) {
+      toggleBundlePopover(false);
+    }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !els.bundlePopover.hidden) {
+      toggleBundlePopover(false);
+      e.stopPropagation();
+    }
+  }, true);
   els.blurbReset.addEventListener("click", () => { els.blurbInput.value = blurbDefault; });
 
   // Pasting a key is enough: commit it on Enter or when the field is left, so
@@ -167,13 +181,17 @@ function applyLlmState(s) {
       `or pick "Custom model…" to type any name ${info.label} accepts.`
     : "";
 
-  // A key bundle ("master key") supplies keys, and optionally the provider and
-  // model, for this browser session only. Anything it supplies is disabled here
-  // rather than silently ignored — editing it would change the shared file that
-  // other people on the same instance are using.
+  // A key bundle ("master key") supplies keys for this browser session only.
+  // Any provider the bundle holds a key for stays selectable — switching is
+  // stored in this browser's session, not in the shared settings file — while
+  // a provider it has no key for is greyed out rather than silently failing.
   const bundle = s.keyBundle || { configured: false, unlocked: false };
   const managed = bundle.unlocked ? (bundle.providers || []) : [];
-  els.providerSelect.disabled = !!bundle.unlocked;
+  const available = bundle.unlocked ? (bundle.availableProviders || []) : null;
+  els.providerSelect.disabled = false;
+  for (const opt of els.providerSelect.options) {
+    opt.disabled = available ? !available.includes(opt.value) : false;
+  }
   els.keyInput.disabled = managed.includes(s.provider);
   els.pexelsInput.disabled = managed.includes("pexels");
   if (bundle.unlocked) {
@@ -231,30 +249,41 @@ function formatDuration(ms) {
   return `${d}d ${h % 24}h`;
 }
 
-function close() { els.backdrop.hidden = true; }
+function close() {
+  els.backdrop.hidden = true;
+  toggleBundlePopover(false);   // never reopen Settings with a stray popover open
+}
+
+/** The "master key" popover behind the header's key icon. Hidden entirely
+ *  unless the server has bundles configured, so most users never see it. */
+function toggleBundlePopover(force) {
+  const open = typeof force === "boolean" ? force : els.bundlePopover.hidden;
+  els.bundlePopover.hidden = !open;
+  els.bundleToggle.setAttribute("aria-expanded", String(open));
+  if (open && !els.bundleLocked.hidden) els.bundleInput.focus();
+}
 
 /** The "master key" field: hidden entirely unless the server has bundles
  *  configured, so a normal single-user install never sees it. */
 function paintKeyBundle(bundle) {
   const visible = !!bundle.configured;
-  els.bundleField.hidden = !visible;
+  els.bundleToggle.hidden = !visible;
   if (!visible) return;
   const unlocked = !!bundle.unlocked;
+  els.bundleToggle.classList.toggle("is-unlocked", unlocked);
+  els.bundleToggle.title = unlocked ? `Key bundle: ${bundle.label}` : "Key bundle";
   els.bundleLocked.hidden = unlocked;
   els.bundleActive.hidden = !unlocked;
   els.bundleInput.value = "";
   if (unlocked) {
     els.bundleLabel.textContent = bundle.label || "Key bundle";
     const which = (bundle.providers || []).join(", ") || "none";
+    const switchable = (bundle.availableProviders || []).length > 1;
+    const modelApplies = !!bundle.model && bundle.modelProvider === bundle.provider;
     els.bundleNote.textContent =
-      `Unlocked for this browser — ${which} supplied by the bundle` +
-      (bundle.model ? `, model fixed to ${bundle.model}` : "") +
-      `. Provider and key fields are managed here; lock it to edit them yourself.`;
-  } else {
-    els.bundleNote.textContent =
-      "One key that fills in every provider key at once — no separate Gemini/" +
-      "DeepSeek/Pexels keys needed. It unlocks this browser only and is never " +
-      "stored on this machine.";
+      `Unlocks ${which} for this browser` +
+      (modelApplies ? `, model fixed to ${bundle.model}` : "") +
+      (switchable ? ". You can switch between the providers it holds keys for." : ".");
   }
 }
 
