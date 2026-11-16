@@ -380,10 +380,10 @@
 
         <div class="field">
           <span class="field-label">Model</span>
-          <input id="settings-model-input" type="text" list="settings-model-options"
-                 placeholder="Use the provider's default" autocomplete="off"
+          <div id="settings-model-picker" class="combo"></div>
+          <input id="settings-model-input" type="text" class="combo-custom" hidden
+                 placeholder="Any model name the provider accepts" autocomplete="off"
                  spellcheck="false" />
-          <datalist id="settings-model-options"></datalist>
           <p id="settings-model-note" class="export-note"></p>
         </div>
 

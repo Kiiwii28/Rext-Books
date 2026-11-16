@@ -149,6 +149,16 @@ Open <http://127.0.0.1:5000>.
   can't overflow a PDF page.
 - **Images in sections** — in the editor, **🖼 Image** → paste, drop, upload a file,
   or add a link. Files are stored under `books/assets/<bookId>/`.
+- **Books survive a server wipe** — every book the browser has opened or edited is
+  also mirrored in the browser itself (IndexedDB, `static/js/local-store.js`). Saves
+  are written there *before* the network call, so an edit still lands if the save
+  fails, and anything the server has lost (a redeploy, or a free-tier spin-down that
+  erases the container's disk) is pushed back on the next page load — same ids, same
+  content, with a `[vault] wrote N book(s) back to the server` line in the console.
+  Deleting a book clears it from both places, so it can't come back. Limits: the copy
+  is per-browser (another device or a cleared site-data cache has nothing to restore),
+  and uploaded image *files* under `books/assets/` are not mirrored — remote images
+  (Wikimedia/Pexels) come back fine, local uploads may need re-adding.
 - **Export** — **PDF** (15 palettes), **EPUB**, **Markdown**, or **JSON** (the raw
   book file). **Content to include** in the Export dialog picks which parts of the
   book actually go in the file — tick a heading and its whole subtree comes along,

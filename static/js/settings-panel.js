@@ -6,13 +6,36 @@
 
 import { getSettings, saveSettings, testApiKey } from "./api.js";
 import * as store from "./store.js";
+import { mountCombo, CUSTOM } from "./combo.js";
 
 let els = {};
 let blurbDefault = "";
 let providers = [];   // last /api/settings provider list (browser-safe: no keys)
+let modelCombo = null;
 
 export async function mountSettings(refs) {
   els = refs;
+
+  // The model is chosen from a themed dropdown (a native <select> renders its
+  // open list in OS colours, and a <input list=datalist> only shows options
+  // once the box is empty — neither matches the app). The hidden text input
+  // stays the single source of the value, so Save/Test keep working unchanged;
+  // "Custom model…" just reveals it for a free-form name.
+  modelCombo = mountCombo(els.modelPicker, {
+    onSelect: (value) => {
+      if (value === CUSTOM) {
+        els.modelInput.hidden = false;
+        els.modelInput.value = "";
+        modelCombo.setValue("");
+        els.modelInput.focus();
+        return;
+      }
+      els.modelInput.value = value;
+      els.modelInput.hidden = true;
+      modelCombo.setValue(value);
+    },
+  });
+  els.modelInput.addEventListener("input", () => modelCombo.setValue(els.modelInput.value.trim()));
 
   els.openBtn.addEventListener("click", () => open());
   els.closeBtn.addEventListener("click", close);
@@ -122,16 +145,21 @@ function applyLlmState(s) {
   const label = s.providerLabel || (info ? info.label : "") || "this provider";
 
   els.modelInput.value = s.model || "";
-  els.modelInput.placeholder = s.defaultModel ? `${s.defaultModel} (default)` : "Provider default";
-  els.modelOptions.innerHTML = "";
-  for (const m of (s.models || [])) {
-    const opt = document.createElement("option");
-    opt.value = m;
-    els.modelOptions.appendChild(opt);
-  }
+  const known = [
+    { value: "", label: s.defaultModel ? `${s.defaultModel} (default)` : "Provider default" },
+    ...(s.models || [])
+      .filter((m) => m !== s.defaultModel)
+      .map((m) => ({ value: m, label: m })),
+    { value: CUSTOM, label: "Custom model…" },
+  ];
+  modelCombo.setItems(known);
+  modelCombo.setValue(s.model || "");
+  // A saved name that isn't one of the presets (or a half-typed one) needs the
+  // text input visible; a preset, including "default", doesn't.
+  els.modelInput.hidden = known.some((k) => k.value === (s.model || ""));
   els.modelNote.textContent = info
-    ? `${info.label} default: ${info.defaultModel}. Pick one from the list or ` +
-      `type any model name ${info.label} accepts — leave blank for the default.`
+    ? `${info.label} default: ${info.defaultModel}. Choose a model from the list, ` +
+      `or pick "Custom model…" to type any name ${info.label} accepts.`
     : "";
 
   els.keyLabel.textContent = `${label} API key`;

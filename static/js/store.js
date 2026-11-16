@@ -1,6 +1,7 @@
 // In-memory book state + tree mutations + debounced autosave + pub/sub.
 
 import { saveBook } from "./api.js";
+import { putBook } from "./local-store.js";
 
 const listeners = new Set();
 // Ephemeral "pick" state — never saved to the book.
@@ -558,8 +559,14 @@ export async function flush() {
 
   saving = true;
   if (state.saveStatus !== "saving") { state = { ...state, saveStatus: "saving" }; emit(); }
+  // Mirror locally BEFORE the network call: on a hosted instance the server's
+  // disk can vanish between saves (redeploy / spin-down), and a failed PUT
+  // used to mean the only copy of the edit was in memory. The copy is marked
+  // dirty until the server acknowledges it.
+  await putBook(state.book, { dirty: true });
   try {
-    await saveBook(state.book.id, state.book);   // snapshot taken here, latest
+    const saved = await saveBook(state.book.id, state.book);   // snapshot taken here, latest
+    if (saved && saved.id) putBook(saved);   // clean: the server has this exact copy
     // Don't swap the `book` reference — that forces a full tree re-render which
     // would fight an in-progress inline edit. Only the status matters.
     state = { ...state, saveStatus: resaveQueued ? "dirty" : "saved" };

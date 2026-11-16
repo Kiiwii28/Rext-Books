@@ -13,6 +13,16 @@ files are the same ones used locally.
 > redeploy or spin-down. That is expected here: this exists to measure memory
 > use and export reliability, not to hold real work. Use it with throwaway
 > books only.
+>
+> **Your books do come back, though.** The browser keeps its own copy of every
+> book it has opened (`static/js/local-store.js` → IndexedDB) and re-uploads
+> anything the server has lost on the next page load, so a redeploy no longer
+> destroys work on the machine you edited from. Two caveats: the copy is
+> per-browser (a different device or cleared site data has nothing to restore),
+> and uploaded image files under `books/assets/` are not mirrored — books built
+> from Wikimedia/Pexels images are fine, local uploads may need re-adding. If
+> you need server-side durability across devices, that means a persistent disk
+> (paid plan) or the stateless/BYOK variant, not this deployment.
 
 ---
 

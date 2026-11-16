@@ -2,6 +2,7 @@
 
 import * as store from "./store.js";
 import * as api from "./api.js";
+import * as vault from "./local-store.js";
 import { mountTree, renderTree } from "./tree.js";
 import { mountDock, updateDock } from "./ai-dock.js";
 import { mountExport } from "./export-panel.js";
@@ -134,8 +135,8 @@ const settingsEls = {
   closeBtn: $("settings-close"),
   status: $("settings-status"),
   providerSelect: $("settings-provider"),
+  modelPicker: $("settings-model-picker"),
   modelInput: $("settings-model-input"),
-  modelOptions: $("settings-model-options"),
   modelNote: $("settings-model-note"),
   keyLabel: $("settings-key-label"),
   keyDest: $("settings-key-dest"),
@@ -233,23 +234,95 @@ store.subscribe((state) => {
 });
 
 function paintSaveState(status) {
-  const map = { idle: "", dirty: "Unsaved…", saving: "Saving…", saved: "Saved", error: "Save failed" };
+  const map = {
+    idle: "",
+    dirty: "Unsaved…",
+    saving: "Saving…",
+    saved: "Saved",
+    error: "Kept in this browser — server save failed",
+  };
   els.saveState.textContent = map[status] ?? "";
   els.saveState.dataset.status = status;
 }
 
 // ---- book switching ----------------------------------------------------
 
+/** Push this browser's copies back to a server that lost them.
+ *
+ * A hosted deployment wipes its disk on every redeploy and free-tier
+ * spin-down, which used to mean every saved book was gone for good. Each book
+ * this browser has opened is mirrored in IndexedDB (local-store.js), so on the
+ * first load after a wipe the missing ones are re-created — same ids, same
+ * content. A copy whose save never reached the server (``dirty``) is pushed
+ * back even if the server still has an older version of it, so a failed save
+ * can't silently revert. Returns how many books were written back. */
+async function restoreMissingBooks(serverBooks) {
+  const local = await vault.listBooks();
+  if (!local.length) return 0;
+  const have = new Set(serverBooks.map((b) => b.id));
+  let restored = 0;
+  for (const rec of local) {
+    if (!rec.book) continue;
+    try {
+      if (!have.has(rec.id)) {
+        await api.restoreBook(rec.book);
+        await vault.putBook(rec.book);          // clean now: the server has it
+        restored += 1;
+      } else if (rec.dirty) {
+        const saved = await api.saveBook(rec.id, rec.book);
+        await vault.putBook(saved && saved.id ? saved : rec.book);
+        restored += 1;
+      }
+    } catch (err) {
+      console.warn("[vault] could not restore", rec.id, err);
+    }
+  }
+  if (restored) console.info(`[vault] wrote ${restored} book(s) back to the server`);
+  return restored;
+}
+
 async function refreshPicker(selectId) {
-  const books = await api.listBooks();
+  let books = await api.listBooks();
+  const restored = await restoreMissingBooks(books);
+  if (restored) books = await api.listBooks();   // re-list so they show up
   setPickerBooks(books);
   if (selectId) setPickerValue(selectId);
+  mirrorLibrary(books);   // fire-and-forget: unopened books become recoverable too
   return books;
 }
 
+/** Copy every book this browser hasn't cached yet.
+ *
+ * Opening a book caches it, but a redeploy shouldn't only spare whichever one
+ * happened to be open — so the rest of the library is cached in the background,
+ * once. Skipped for a very large library (a fresh browser would otherwise pull
+ * every book at once) and never awaited, so it can't delay the UI. */
+async function mirrorLibrary(books) {
+  if (!books.length || books.length > 50) return;
+  const cached = new Set((await vault.listBooks()).map((r) => r.id));
+  for (const meta of books) {
+    if (cached.has(meta.id)) continue;
+    try {
+      const full = await api.getBook(meta.id);
+      await vault.putBook(full);
+    } catch (err) {
+      console.warn("[vault] could not cache", meta.id, err);
+    }
+  }
+}
+
 async function openBook(id) {
-  const book = await api.getBook(id);
+  let book = null;
+  try {
+    book = await api.getBook(id);
+  } catch (err) {
+    // Server can't serve it (wiped and not yet restored, or offline) — fall
+    // back to this browser's copy rather than showing an empty app.
+    book = await vault.getBook(id);
+    if (!book) throw err;
+  }
   store.setBook(book);
+  vault.putBook(book);   // cache on open, so unedited books survive too
   setPickerValue(id);
   localStorage.setItem(LAST_BOOK, id);
 }
@@ -267,6 +340,7 @@ els.deleteBtn.addEventListener("click", async () => {
   const book = store.getBook();
   if (!book || !confirm(`Delete "${book.title}"? This cannot be undone.`)) return;
   await api.deleteBook(book.id);
+  await vault.removeBook(book.id);   // leaving it cached would resurrect it on the next load
   localStorage.removeItem(LAST_BOOK);
   const books = await refreshPicker();
   if (books.length) openBook(books[0].id);
@@ -330,10 +404,16 @@ $("import-file").addEventListener("change", async (e) => {
 // ---- initial load -----------------------------------------------------
 
 (async () => {
-  const books = await refreshPicker();
-  const last = localStorage.getItem(LAST_BOOK);
-  const target = books.find((b) => b.id === last) || books[0];
-  if (target) await openBook(target.id);
-  else { els.emptyState.hidden = false; els.tree.hidden = true; els.startTopic.focus(); }
+  try {
+    const books = await refreshPicker();
+    const last = localStorage.getItem(LAST_BOOK);
+    const target = books.find((b) => b.id === last) || books[0];
+    if (target) await openBook(target.id);
+    else { els.emptyState.hidden = false; els.tree.hidden = true; els.startTopic.focus(); }
+  } catch (err) {
+    console.error("initial load failed", err);
+    els.emptyState.hidden = false;
+    els.tree.hidden = true;
+  }
   openIfNoKey();   // guides a first-time / freshly-packaged install straight to Settings
 })();

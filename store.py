@@ -126,6 +126,13 @@ def list_books() -> list[dict]:
             data = json.loads(p.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             continue
+        # The directory also holds sidecars (`<id>.usedimages.json`, the
+        # image-dedupe record) and they match `*.json` — they used to appear in
+        # the book picker as phantom "books" with an `.usedimages` id, which the
+        # browser vault then tried to download and restore. A real book always
+        # has an id and a `nodes` list.
+        if not isinstance(data, dict) or not data.get("id") or not isinstance(data.get("nodes"), list):
+            continue
         out.append({
             "id": data.get("id", p.stem),
             "title": data.get("title", "Untitled"),
@@ -181,6 +188,30 @@ def delete_book(book_id: str) -> bool:
     shutil.rmtree(config.BOOKS_DIR / "assets" / book_id, ignore_errors=True)
     (config.BOOKS_DIR / f"{book_id}.usedimages.json").unlink(missing_ok=True)
     return existed
+
+
+def restore_book(data: dict) -> dict:
+    """Put a book back from the browser's own cached copy, keeping its id.
+
+    Only fills a gap: a hosted instance wipes ``books/`` on every redeploy and
+    free-tier spin-down, and the browser re-uploads what it has. If the id is
+    already on the server that copy is returned untouched — restoring must
+    never overwrite work that survived.
+    """
+    if not isinstance(data, dict) or not isinstance(data.get("nodes"), list):
+        raise ValueError("not a Rextbooks book (missing 'nodes' list)")
+    book_id = str(data.get("id") or "")
+    _path(book_id)                     # raises ValueError on a malformed id
+    existing = get_book(book_id)
+    if existing is not None:
+        return existing
+    book = dict(data)
+    book["id"] = book_id
+    book.setdefault("createdAt", _now())
+    book["updatedAt"] = _now()
+    book["settings"] = {**DEFAULT_SETTINGS, **(book.get("settings") or {})}
+    _write(book_id, book)
+    return book
 
 
 def import_book(data: dict) -> dict:

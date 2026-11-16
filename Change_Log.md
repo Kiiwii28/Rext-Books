@@ -9,6 +9,97 @@ From 2026-09-20 onward, entries are logged at the time each change is made.
 
 ---
 
+## 2026-11-16 (night, UI)
+
+**Settings → Model is a proper dropdown now.**
+
+It was an `<input list="…">` + `<datalist>`, and a datalist only shows its
+options once the field is empty (typing/keeping a value filters the list to
+nothing), so the arrow looked like a dead control. It also rendered in OS
+chrome, unlike everything else in the app.
+
+- **`static/js/combo.js` (new)** — a small reusable single-select combobox:
+  button + themed listbox, ↑/↓/Enter/Space/Esc/Tab, click-outside to close,
+  moved to `<body>` while open (containers using `backdrop-filter` trap fixed
+  descendants), and it flips above the button when there's no room below.
+  Exposes `setItems` / `setValue` / `getValue`, and a `CUSTOM` sentinel item
+  that reports itself instead of becoming the selection.
+- **`templates/index.html`** — the model field is now `<div class="combo">` +
+  the same `#settings-model-input`, hidden, used only for a free-form name.
+  So `onSave`/`onTest` still read one value, unchanged.
+- **`static/js/settings-panel.js`** — the list is
+  `default (gemini-3.8-flash)`, the provider's models, then **Custom model…**,
+  which reveals the text input for any name the provider accepts (that
+  capability was in the old helper text and still works). The button label
+  follows typed text live.
+- **`static/css/style.css`** — `.combo-*` shares the book-switcher's rules
+  (`.book-picker-*`), so the two dropdowns are literally the same styling: the
+  computed style of the two buttons is byte-identical (same background,
+  border, radius, padding, 13px/600 type). The list needs `z-index: 70`
+  (set inline at open) because the settings modal's backdrop is `z-index: 50`
+  — at 40 the modal swallowed every click on the open list.
+- Verified in the browser: opening shows 5 items with the saved model
+  highlighted; a mouse click selects (`gemini-3.6-flash` in both the label and
+  the hidden input, list closed); ↑/↓ + Enter selects too; "Custom model…"
+  reveals and focuses the input, and typing updates the label
+  (`gemini-9-experimental`), so Save still sends what the user sees.
+
+## 2026-11-16 (night, later)
+
+**Books now survive a redeploy: the browser keeps its own copy.**
+
+The problem: books were never in the browser — only on the server's disk, which
+a hosted instance wipes on every redeploy (and on free-tier spin-down), so a
+book someone was working on simply disappeared with nothing to recover from.
+
+- **`static/js/local-store.js` (new)** — a small IndexedDB store
+  (`rextbooks-vault`) holding `{id, title, updatedAt, cachedAt, dirty, book}`
+  per book. No dependency, and every operation degrades to a no-op when
+  IndexedDB is unavailable (private mode), leaving the app exactly as before.
+- **`static/js/store.js`** — `flush()` mirrors the book locally *before* the
+  PUT, marked `dirty`, and re-mirrors the server's response as clean. So a save
+  that never reaches the server (spin-down, dropped connection) still lands in
+  the browser. The "Save failed" label became "Kept in this browser — server
+  save failed", which is now true.
+- **`static/js/main.js`** — on startup `restoreMissingBooks()` compares the
+  vault with `/api/books`: a book the server no longer has is re-created with
+  its **original id**, and a `dirty` copy is force-saved over an older server
+  version (otherwise a failed save would silently revert on the next load).
+  `openBook()` falls back to the vault if the server can't serve a book, and
+  caching happens on open too, so unedited books survive as well. Delete removes
+  both copies so nothing is resurrected; the startup path is wrapped so an
+  unreachable server shows the empty state instead of an unhandled rejection.
+- **`app.py` / `store.py`** — `POST /api/books/restore` →
+  `store.restore_book(data)`: validates the id, **keeps the original id**, and
+  only ever creates a missing book (an existing server copy is returned
+  untouched), so this endpoint cannot roll back real work.
+- **Verified against a scratch server with the book file deleted from disk**
+  (exactly what a redeploy does): reload → `[vault] restored 1 book(s)`,
+  `/api/books` lists it again, and the outline shows the original tree with its
+  section text intact. A simulated failed save (`PUT` stubbed to reject) left
+  `saveStatus: error` with a `dirty` vault record, and the next load pushed it
+  back — server title became "Edited while offline", record clean. Deleting
+  through the UI cleared server and vault (0 and 0) and the next reload did not
+  bring it back.
+- Known limits (documented in README/CLAUDE.md and the Render notes): the copy
+  is per-browser, and uploaded files under `books/assets/` are not mirrored —
+  remote images survive, local uploads may need re-adding. Server-side
+  durability across devices would be a Render persistent disk (paid) or the
+  stateless/BYOK variant.
+- **The whole library is cached, not just the open book** (`mirrorLibrary` in
+  `main.js`): after a book opens, any book this browser hasn't cached yet is
+  fetched once in the background (fire-and-forget, skipped above 50 books), so a
+  redeploy can't strand the books the user wasn't looking at. Verified on the
+  real local library: 15 server books → 15 vault records, 0 dirty.
+- **Fixed a real pre-existing bug found by that pass**: `store.list_books()`
+  globbed `*.json` and so also returned the `<id>.usedimages.json` sidecars as
+  phantom "books" (ids like `0596…usedimages`, title "Untitled") — they showed
+  in the picker and made the vault try to download and restore them (HTTP 500).
+  A real book must now have an `id` **and** a `nodes` list. The local library
+  went from 20 listed to the 15 real books.
+- Files synced to `dist-portable/Rextbooks/` including the new
+  `static/js/local-store.js`.
+
 ## 2026-11-16 (later still)
 
 **Export memory tuning for small hosted instances** (`pdfgen.py`,

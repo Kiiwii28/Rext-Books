@@ -191,8 +191,9 @@ body {
 /* Custom book switcher — a native <select>'s open dropdown can't be skinned
    consistently (it always renders in the OS's own colours/font), so this is
    a small combobox built from a button + a styled listbox instead. */
-.book-picker { position: relative; width: max-content; max-width: 320px; min-width: 170px; }
-.book-picker-btn {
+.book-picker, .combo { position: relative; width: max-content; max-width: 320px; min-width: 170px; }
+.field .combo { width: 100%; max-width: none; }
+.book-picker-btn, .combo-btn {
   appearance: none;
   width: 100%;
   font: inherit;
@@ -208,20 +209,21 @@ body {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
   text-align: left;
 }
-.book-picker-btn:hover { border-color: var(--accent-2); }
-.book-picker-btn:focus-visible {
+.book-picker-btn:hover, .combo-btn:hover { border-color: var(--accent-2); }
+.book-picker-btn:focus-visible, .combo-btn:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--accent) 50%, transparent); outline-offset: 1px;
 }
-.book-picker-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.book-picker-arrow {
+.book-picker-label, .combo-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.book-picker-arrow, .combo-arrow {
   flex: none; width: 0; height: 0;
   border-left: 4px solid transparent; border-right: 4px solid transparent;
   border-top: 5px solid var(--ink-soft);
   transition: transform .12s ease;
 }
-.book-picker-btn[aria-expanded="true"] .book-picker-arrow { transform: rotate(180deg); }
+.book-picker-btn[aria-expanded="true"] .book-picker-arrow,
+.combo-btn[aria-expanded="true"] .combo-arrow { transform: rotate(180deg); }
 
-.book-picker-list {
+.book-picker-list, .combo-list {
   /* fixed, and moved to <body> while open (see book-picker.js) — .topbar
      uses backdrop-filter, which (like any filter) makes it a containing
      block for fixed descendants, trapping them inside its own clipped box
@@ -237,17 +239,30 @@ body {
   box-shadow: var(--shadow-md), var(--shine);
   z-index: 40;
 }
-.book-picker-opt {
+/* The settings modal's backdrop is z-index 50, so a dropdown opened inside it
+   must sit above that — it lives on <body> while open, but paint order is still
+   decided by z-index, and at 40 the modal swallowed every click on the list. */
+.combo-list { z-index: 70; }
+.book-picker-opt, .combo-opt {
   padding: 7px 10px; border-radius: 7px;
   font-size: 13px; font-weight: 600; color: var(--ink-soft);
   cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   outline: none;
 }
-.book-picker-opt:hover, .book-picker-opt:focus { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--ink); }
-.book-picker-opt.active {
+.book-picker-opt:hover, .book-picker-opt:focus,
+.combo-opt:hover, .combo-opt:focus { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--ink); }
+.book-picker-opt.active, .combo-opt.active {
   background: linear-gradient(180deg, var(--accent-2), var(--accent));
   color: var(--accent-ink);
 }
+/* "Custom model…" — a way out of the preset list, so it reads as an action
+   rather than another choice. */
+.combo-opt-custom {
+  margin-top: 4px; border-top: 1px solid var(--line); border-radius: 0 0 7px 7px;
+  padding-top: 9px; font-style: italic; font-weight: 500;
+}
+.combo-custom { margin-top: 6px; }
+.combo-custom[hidden] { display: none; }
 
 .save-state {
   font-size: 11.5px;

@@ -26,6 +26,16 @@ export const saveBook = (id, book) =>
 export const deleteBook = (id) =>
   fetch(`/api/books/${id}`, { method: "DELETE" }).then(j);
 
+/** Put a browser-cached book back after the server's disk was wiped (redeploy
+ *  or spin-down). Idempotent: a server copy always wins, so this can only
+ *  fill a gap, never roll back real work. */
+export const restoreBook = (book) =>
+  fetch("/api/books/restore", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(book),
+  }).then(j);
+
 export const renderMarkdown = (text) =>
   fetch("/render", {
     method: "POST",

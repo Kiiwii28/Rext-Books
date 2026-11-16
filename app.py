@@ -281,6 +281,23 @@ def api_get_book(book_id: str):
     return jsonify(book)
 
 
+@app.post("/api/books/restore")
+def api_restore_book():
+    """Re-create a book from the browser's own cached copy.
+
+    A hosted instance wipes its disk on every redeploy and on free-tier
+    spin-down, so the browser (see static/js/local-store.js) keeps a mirror of
+    each book it has opened and pushes back anything the server has lost. This
+    only ever *creates* a missing book: if the id already exists the stored
+    copy is returned untouched, so it can't roll back real work."""
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "invalid body"}), 400
+    try:
+        return jsonify(store.restore_book(data)), 201
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
 @app.route("/api/books/<book_id>", methods=["PUT", "POST"])  # POST = sendBeacon fallback
 def api_save_book(book_id: str):
     data = request.get_json(silent=True)
