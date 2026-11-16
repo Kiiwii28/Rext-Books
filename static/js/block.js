@@ -224,6 +224,25 @@ export function createBlock(node, { selectedId, onChange, context }) {
     const created = store.addSiblingAfter(node.id, "");
     if (created) onChange.select(created.id);
   }));
+
+  // Reordering is drag-and-drop, which never fires for touch (iOS supports no
+  // HTML5 DnD at all), so a phone gets explicit move buttons instead. They are
+  // hidden above the mobile breakpoint by CSS, so desktop is unchanged.
+  function moveBy(delta) {
+    const hit = store.findNode(node.id);
+    if (!hit) return;
+    const i = hit.siblings.indexOf(hit.node);
+    const target = i + delta;
+    if (target < 0 || target >= hit.siblings.length) return;
+    // reorder(id, beforeId) inserts *before* that id, so moving down needs the
+    // sibling after the destination (null = move to the end).
+    const beforeId = delta > 0
+      ? (hit.siblings[target + 1]?.id ?? null)
+      : hit.siblings[target].id;
+    store.reorder(node.id, beforeId);
+  }
+  tools.append(toolBtn("↑", "Move up", (e) => { e.stopPropagation(); moveBy(-1); }, "b-tool-mobile"));
+  tools.append(toolBtn("↓", "Move down", (e) => { e.stopPropagation(); moveBy(1); }, "b-tool-mobile"));
   tools.append(toolBtn("🗑", "Delete", (e) => {
     e.stopPropagation();
     if ((node.children || []).length && !confirm("Delete this block and everything inside it?")) return;
@@ -827,9 +846,9 @@ function readSavedView() {
   }
 }
 
-function toolBtn(glyph, title, onClick) {
+function toolBtn(glyph, title, onClick, extraClass = "") {
   const b = document.createElement("button");
-  b.className = "b-tool";
+  b.className = "b-tool" + (extraClass ? ` ${extraClass}` : "");
   b.title = title;
   b.textContent = glyph;
   b.addEventListener("click", onClick);

@@ -159,6 +159,23 @@ Open <http://127.0.0.1:5000>.
   is per-browser (another device or a cleared site-data cache has nothing to restore),
   and uploaded image *files* under `books/assets/` are not mirrored — remote images
   (Wikimedia/Pexels) come back fine, local uploads may need re-adding.
+- **Works on a phone** — below 900px wide the two panels become one swipeable,
+  scroll-snapping pair (Outline first, AI Assistant one swipe away) with a bottom
+  tab bar, a floating **✨ AI for this block** shortcut once a block is selected,
+  a collapsed tone/depth/context section so the prompt and Generate stay above the
+  fold, always-visible block tools, and ↑/↓ buttons for reordering (HTML5 drag
+  doesn't fire on touch). Above 900px nothing changes — every mobile rule lives in
+  the same media query, and the touch-only rules under `(hover: none)`.
+- **Key bundles ("master keys")** — one passcode fills in several provider keys at
+  once, for someone who shouldn't be pasting a Gemini key, a DeepSeek key and a
+  Pexels key separately. Bundles are configuration you own: `REXTBOOKS_KEY_BUNDLES`
+  (JSON, the one to use on a host) or `key_bundles.json` beside the app (gitignored).
+  Each person's passcode unlocks **their own** bundle in **their own browser** — a
+  signed cookie holds only an opaque bundle id, never the passcode or a key — so two
+  people on one instance don't overwrite each other. Enter it in **⚙ Settings →
+  🔑 Key bundle**; while unlocked, the fields it supplies are disabled because
+  writing them would change the shared settings file. See the Render notes for the
+  JSON shape and a passcode generator.
 - **Export** — **PDF** (15 palettes), **EPUB**, **Markdown**, or **JSON** (the raw
   book file). **Content to include** in the Export dialog picks which parts of the
   book actually go in the file — tick a heading and its whole subtree comes along,

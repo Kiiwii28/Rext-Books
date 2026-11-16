@@ -59,6 +59,17 @@ export const saveSettings = (partial) =>
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify(partial),
   }).then(j);
+
+/** Unlock a key bundle ("master key"): one passcode fills in every provider
+ *  key. The server keeps only an opaque bundle id in the session cookie, so
+ *  this is per-browser and never touches the shared settings file. */
+export const unlockKeyBundle = (passcode) =>
+  fetch("/api/settings/unlock", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ passcode }),
+  }).then(j);
+export const lockKeyBundle = () =>
+  fetch("/api/settings/lock", { method: "POST" }).then(j);
 export const testApiKey = (apiKey, provider, model) =>
   fetch("/api/settings/test", {
     method: "POST", headers: { "Content-Type": "application/json" },

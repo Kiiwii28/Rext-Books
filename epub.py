@@ -86,9 +86,14 @@ class _AssetBag:
     _EXTS = {"png", "jpg", "jpeg", "gif", "svg", "webp"}
     _COMPRESSIBLE = {"png", "jpg", "jpeg"}
 
-    def __init__(self, base_url: str, lite: bool = False):
+    def __init__(self, base_url: str, lite: bool = False, prefix: str = ""):
         self.base_url = base_url
         self.lite = lite
+        # Only used by the Pages export: filenames there end up in a shared
+        # vault, where Obsidian resolves `![[img1.png]]` by name alone — so two
+        # books both named "img1.png" would silently overwrite each other.
+        # Inside an EPUB the names are container-private, so it stays blank.
+        self.prefix = prefix
         self.by_src: dict[str, str | None] = {}
         self.files: dict[str, bytes] = {}
         self.media_types: dict[str, str] = {}
@@ -112,7 +117,7 @@ class _AssetBag:
         """Add an already-in-hand file (e.g. a rasterized diagram) with no
         source URL to de-duplicate against — always a fresh asset."""
         self._n += 1
-        name = f"images/img{self._n}.{ext}"
+        name = f"images/{self.prefix}img{self._n}.{ext}"
         self.files[name] = data
         self.media_types[name] = (
             "image/svg+xml" if ext == "svg" else (mimetypes.types_map.get(f".{ext}") or "image/png")

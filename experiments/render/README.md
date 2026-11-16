@@ -80,6 +80,53 @@ so put the keys here):
 | `DEEPSEEK_API_KEY` | `sk-…` | only if using DeepSeek |
 | `GEMINI_MODEL` | `gemini-3.8-flash` | optional; omit for the default |
 | `REXTBOOKS_PDF_TIMEOUT` | `300` | optional; raise if exports time out |
+| `REXTBOOKS_SECRET_KEY` | (long random) | optional but recommended — otherwise every deploy invents a new one and logs everyone out of their key bundle |
+| `REXTBOOKS_KEY_BUNDLES` | `{"rk-mum-…":{"label":"Mum","gemini":"AIza…","pexels":"…"}}` | optional — "master key" bundles, see below |
+
+### Key bundles ("master keys")
+
+A passcode that fills in several provider keys at once, for someone who
+shouldn't be pasting a Gemini key, a DeepSeek key and a Pexels key separately.
+
+Set `REXTBOOKS_KEY_BUNDLES` (a **secret** — it contains the real keys) to JSON
+whose top-level keys are the passcodes people type:
+
+```json
+{
+  "rk-mum-8f3a91c2d5e64b70a1c9b3e5d7f9": {
+    "label": "Mum",
+    "provider": "gemini",
+    "keys": { "gemini": "AIza…", "pexels": "…" }
+  },
+  "rk-me-2b91d7e4c6a84f0e9d13c5a7b9e1": {
+    "label": "Me",
+    "provider": "deepseek",
+    "keys": { "deepseek": "sk-…", "gemini": "AIza…" }
+  }
+}
+```
+
+Generate a passcode with:
+
+```bash
+python -c "import secrets; print('rk-' + secrets.token_hex(16))"
+```
+
+How it behaves:
+
+- Entering a passcode in **⚙ Settings → 🔑 Key bundle** unlocks it **for that
+  browser only** (a signed cookie holding an opaque bundle id — never the
+  passcode, never a key), so two people on the same instance keep their own
+  keys and cannot overwrite each other's. It survives redeploys as long as
+  `REXTBOOKS_SECRET_KEY` is set.
+- While unlocked, the bundle supplies the provider, the keys (and the model if
+  the bundle sets one); those controls are disabled in Settings, because
+  writing them would change the shared settings file.
+- Unlock attempts are rate-limited (10 per 5 minutes per IP), comparisons are
+  constant-time, and nothing about the passcode is logged or written to disk.
+- Removing a bundle from the env var revokes it immediately.
+- Treat each passcode like a password: whoever has it spends the keys inside
+  it. Put a spend limit on the shared Gemini key.
 
 `BOOKS_DIR=/data/books` is already set by the Dockerfile. Do **not** add a
 persistent disk — free instances can't have one, and this test doesn't need it.

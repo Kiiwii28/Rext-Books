@@ -8,6 +8,7 @@ import { mountDock, updateDock } from "./ai-dock.js";
 import { mountExport } from "./export-panel.js";
 import { mountSpark, updateSpark } from "./spark-panel.js";
 import { mountPaneResizer } from "./resize.js";
+import { mountMobileView, updateMobileSelection, showMobileView } from "./mobile-view.js";
 import { mountSettings, openIfNoKey } from "./settings-panel.js";
 import { mountPromptsPanel } from "./prompts-panel.js";
 import { mountTour } from "./tour.js";
@@ -138,6 +139,14 @@ const settingsEls = {
   modelPicker: $("settings-model-picker"),
   modelInput: $("settings-model-input"),
   modelNote: $("settings-model-note"),
+  bundleField: $("settings-bundle-field"),
+  bundleLocked: $("settings-bundle-locked"),
+  bundleActive: $("settings-bundle-active"),
+  bundleInput: $("settings-bundle-input"),
+  bundleUnlock: $("settings-bundle-unlock"),
+  bundleLock: $("settings-bundle-lock"),
+  bundleLabel: $("settings-bundle-label"),
+  bundleNote: $("settings-bundle-note"),
   keyLabel: $("settings-key-label"),
   keyDest: $("settings-key-dest"),
   keyInput: $("settings-key-input"),
@@ -180,6 +189,14 @@ mountExport(exportEls);
 mountSpark(sparkEls);
 mountPaneResizer();
 mountSettings(settingsEls);
+mountMobileView({
+  workspace: document.querySelector(".workspace"),
+  nav: $("mobile-nav"),
+  aiJump: $("mobile-ai-jump"),
+  aiPane: document.querySelector(".ai-pane"),
+  compactToggle: $("ai-compact-toggle"),
+  tree: els.tree,
+});
 mountPromptsPanel(promptsEls);
 mountTour($("btn-tutorial"));
 
@@ -231,6 +248,9 @@ store.subscribe((state) => {
   els.deleteBtn.disabled = !state.book;
   document.getElementById("btn-export").disabled = !state.book;
   if (state.book) updateCurrentTitle(state.book.title || "Untitled");
+  // Mobile: offer "AI for this block" only once something is selected.
+  const selected = state.selectedId ? store.findNode(state.selectedId) : null;
+  updateMobileSelection(selected && selected.node ? selected.node.title : "");
 });
 
 function paintSaveState(status) {

@@ -59,6 +59,21 @@ def _safe_name(title: str, used_lower: set[str]) -> str:
     return name
 
 
+def _asset_prefix(book: dict, root_name: str) -> str:
+    """A per-book prefix for exported image filenames, e.g. ``the-brain-img3.png``.
+
+    Obsidian resolves ``![[img3.png]]`` by filename across the *whole vault*, so
+    without this two books exported into the same vault overwrite each other's
+    diagrams and images (both used to start at ``img1``). The prefix is the
+    book's own title-slug, with a short slice of its id appended when the slug
+    is empty, so re-exporting a book replaces its own images rather than
+    duplicating them."""
+    slug = re.sub(r"[^a-z0-9]+", "-", (root_name or "").lower()).strip("-")
+    slug = slug[:40] or "rextbook"
+    book_id = re.sub(r"[^a-z0-9]", "", str(book.get("id") or "").lower())[:6]
+    return f"{slug}-{book_id}-" if book_id else f"{slug}-"
+
+
 def _rewrite_images(content: str, bag: _AssetBag) -> str:
     def repl(m: re.Match) -> str:
         name = bag.add(m.group(2))
@@ -185,7 +200,7 @@ def book_to_pages(book: dict, base_url: str, exclude_ids: set | None = None,
     title = (book.get("title") or "Untitled").strip()
     root_name = _safe_name(title, set())
 
-    bag = _AssetBag(base_url, lite=lite)
+    bag = _AssetBag(base_url, lite=lite, prefix=_asset_prefix(book, root_name))
     tree = _build_tree(nodes, root_name, numbered)
     root = _Node("__root__", title, f"{root_name}/{root_name}")
 

@@ -1,6 +1,9 @@
 .env
 local_settings.json
 prompts.local.json
+# Key bundles ("master keys") hold every API key — never commit this.
+key_bundles.json
+key-gen.py
 .venv/
 dist-portable/
 build-assets/

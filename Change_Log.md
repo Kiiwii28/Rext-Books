@@ -9,6 +9,83 @@ From 2026-09-20 onward, entries are logged at the time each change is made.
 
 ---
 
+## 2026-11-16 (night, mobile + master keys)
+
+**1. Pages export: unique image filenames (fixes two books overwriting each
+other in one Obsidian vault).** `epub.py`'s `_AssetBag` takes an optional
+`prefix`, and `pages.py` passes `_asset_prefix(book, root_name)` — the book's
+title slug plus six characters of its id, e.g.
+`the-brain-as-a-computer-3f2a91-img1.png`. Obsidian resolves `![[img1.png]]`
+by filename across the whole vault, so two exports both starting at `img1`
+silently replaced each other; now a re-export overwrites only its *own*
+images. EPUB keeps the unprefixed `images/imgN.png` because those names live
+inside the container.
+
+**2. Key bundles ("master keys").** One passcode fills in several provider
+keys at once.
+
+- `config.py` — bundles are read from `REXTBOOKS_KEY_BUNDLES` (JSON env var,
+  the hosted path) or `key_bundles.json` beside the app (gitignored); each
+  top-level key is the passcode. Entries accept `{"label", "provider",
+  "model", "keys": {...}}` or the flat shorthand `{"label", "gemini": "…"}`.
+  `resolve_passcode()` compares ids in constant time; a bundle with no LLM key
+  is ignored; malformed config is reported once and skipped rather than
+  blocking boot.
+- Resolution is **per request** via a `threading.local`: `get_llm_provider`,
+  `get_llm_model`, `get_api_key`, `api_key_source` ("bundle") and
+  `get_pexels_key` all consult the unlocked bundle first. Nothing is written to
+  `local_settings.json`, so two people on the same instance cannot overwrite
+  each other — the answer to "does the last master key win?" is **no**.
+- Writes to anything a bundle supplies (`set_api_key`, `set_pexels_key`,
+  `set_llm_provider`, and `set_llm_model` when the bundle pins a model) raise
+  `RuntimeError`; `api_save_settings` turns that into a clear 400.
+- `get_secret_key()` signs a session cookie that holds only an opaque bundle
+  id — `REXTBOOKS_SECRET_KEY` when set (recommended on Render, so redeploys
+  don't log everyone out), otherwise a value generated once into
+  `local_settings.json`.
+- `POST /api/settings/unlock` / `/lock`, rate-limited to 10 attempts per 5
+  minutes per IP; wrong passcode 401, then 429. The passcode is never stored,
+  echoed, or logged.
+- Settings UI: a quiet **🔑 Key bundle** field (hidden unless the server has
+  bundles configured) — passcode + Unlock when locked, `🔑 <label>` + Lock when
+  unlocked, with managed controls disabled and a note saying so. The status
+  line gained a `bundle` case.
+- Verified over HTTP with two sessions: A unlocked "Mum" (Gemini + Pexels,
+  provider forced to Gemini), B unlocked "Me" (DeepSeek + model), **A stayed on
+  Mum after B unlocked**; apiKey/provider/Pexels writes from A were refused;
+  lock fell back to DeepSeek's own saved key; bogus passcode 401; 11th attempt
+  429. Then the same flow through the real Settings dialog.
+
+**3. Mobile layout — a second presentation of the same DOM.** Everything is
+inside the existing `max-width: 900px` query (plus `(hover: none)` rules), so
+desktop is untouched.
+
+- `.workspace` becomes a horizontal, scroll-snapping carousel of the two panes
+  (native momentum, no gesture code); `static/js/mobile-view.js` (new) syncs the
+  bottom tab bar with the scroll position, exposes `showMobileView()`, flips the
+  carousel back to the outline if the window grows past the breakpoint, and
+  delegates "tap anywhere on a `.block-row`" to the ordinary title click so the
+  title text isn't the only hit target.
+- Bottom tab bar (Outline | AI Assistant, 46px targets), a floating
+  **✨ AI for this block** button that appears once a block is selected, and a
+  collapsed "Tone, depth & context" toggle so the prompt + Generate stay above
+  the fold. Generate is sticky at the bottom of the dock.
+- The book switcher moves to its own full-width row on the topbar (it was
+  hidden before — that would have left no way to change books on a phone).
+- Touch rules under `(hover: none), (pointer: coarse)`: block tools/handles are
+  always visible (they were `:hover`-only, so invisible on touch), 38–46px
+  targets, and 16px inputs so iOS stops zooming on focus.
+- `block.js` gained `.b-tool-mobile` **↑/↓ move buttons** — HTML5 drag-and-drop
+  never fires on touch, so reordering had no path at all on a phone.
+- `body` height uses `100dvh` (with `100vh` fallback) so phones don't lose the
+  bottom of the layout to the collapsing toolbar.
+- Verified: desktop at 1280px is still `display: grid` with the same two
+  columns, no mobile chrome, block tools still hover-only and a row click still
+  does *not* select; at 390×844 the workspace is a flex carousel (two 370px
+  pages), the tab bar switches panes (scrollLeft 0 → 370) and syncs back,
+  tapping a row selects + shows the AI shortcut which jumps to the dock with
+  that block as the target, and the compact toggle expands the tone/depth group.
+
 ## 2026-11-16 (night, UI)
 
 **Settings → Model is a proper dropdown now.**

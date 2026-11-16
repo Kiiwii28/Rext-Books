@@ -98,7 +98,11 @@ body {
   background: var(--bg);
   display: flex;
   flex-direction: column;
+  /* dvh follows the browser's real visible height; on phones 100vh includes
+     the collapsing toolbar, which made the layout permanently a little too
+     tall. Both lines are kept so anything without dvh support still works. */
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
 }
@@ -1270,6 +1274,35 @@ body.is-resizing-y, body.is-resizing-y * { cursor: ns-resize !important; user-se
   outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 1px;
 }
 
+/* ---------- Settings → key bundle ("master key") ---------- */
+/* Deliberately quiet: one small key glyph on the label, nothing loud, and the
+   whole block stays hidden unless the server actually has bundles set up. */
+#settings-bundle-input {
+  flex: 1; font: inherit; font-size: 13px; padding: 8px 10px;
+  font-family: var(--mono);
+  border: 1px solid var(--line-strong); border-radius: 7px;
+  background: var(--glass-solid); color: var(--ink); width: 100%;
+}
+#settings-bundle-input:focus {
+  outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 1px;
+}
+.key-bundle .field-label { display: flex; align-items: center; gap: 5px; }
+.kb-key { font-size: 11px; opacity: .55; letter-spacing: 0; }
+.kb-unlock { white-space: nowrap; padding: 0 12px; font-size: 12px; font-weight: 700; }
+.kb-active {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; padding: 7px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--accent) 9%, var(--glass-solid));
+}
+.kb-badge {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12.5px; color: var(--ink); min-width: 0;
+}
+.kb-badge b { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.key-bundle #settings-bundle-lock { flex: none; font-size: 11.5px; padding: 4px 9px; }
+
 /* ---------- Settings → Advanced: prompt text editor ---------- */
 .prompts-panel { border-top: 1px solid var(--line); padding-top: 12px; }
 .prompts-panel > summary {
@@ -1553,12 +1586,128 @@ body.is-resizing-y, body.is-resizing-y * { cursor: ns-resize !important; user-se
 .tour-body b { color: var(--ink); }
 .tour-card-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 4px; }
 
-/* ---------- responsive ---------- */
+/* ---------- responsive / mobile ---------- */
+/* Everything below is inert on a desktop window: the mobile chrome is hidden
+   by default and only the max-width: 900px block reveals it. The swipe is
+   native scroll-snapping rather than gesture code, so it can't fight the
+   vertical scrolling inside each panel. */
+.mobile-nav, .mobile-ai-jump, .ai-compact-toggle, .b-tool-mobile { display: none; }
+
 @media (max-width: 900px) {
-  .workspace { grid-template-columns: 1fr; grid-template-rows: 1.4fr 1fr; }
+  .workspace {
+    /* Two full-width "pages" side by side, one snap point each. */
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    padding: 8px 10px 84px;   /* room for the floating button + tab bar */
+  }
+  .workspace::-webkit-scrollbar { display: none; }
+  .b-tool-mobile { display: inline-flex; align-items: center; justify-content: center; }
+  .workspace > .pane {
+    flex: 0 0 100%;
+    max-width: 100%;
+    scroll-snap-align: center;
+    scroll-snap-stop: always;
+  }
   .pane-resizer { display: none; }
-  .topbar { grid-template-columns: 1fr auto; }
-  .topbar-center { display: none; }
+
+  .topbar {
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      "brand actions"
+      "picker picker";
+    gap: 8px;
+    margin: 8px 10px 0;
+    padding: 8px 10px;
+  }
+  .brand { grid-area: brand; min-width: 0; }
+  .topbar-actions { grid-area: actions; flex-wrap: wrap; justify-content: flex-end; }
+  /* The book switcher can't just be dropped on a phone — it's the only way to
+     change books — so it moves to its own full-width row instead of the
+     (hidden) centre column. */
+  .topbar-center { grid-area: picker; display: block; }
+  .book-picker { width: 100%; max-width: none; }
+  .tagline { display: none; }
+  .save-state { min-width: 0; }
+  /* Icon-only topbar actions keep the row from overflowing a 390px screen. */
+  .topbar-actions .btn.ghost { padding: 6px 8px; font-size: 11.5px; }
+
+  .mobile-nav {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 60;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+    padding: 6px 10px calc(6px + env(safe-area-inset-bottom));
+    background: var(--glass-solid);
+    border-top: 1px solid var(--line);
+    backdrop-filter: blur(18px) saturate(1.4);
+    -webkit-backdrop-filter: blur(18px) saturate(1.4);
+  }
+  .mobile-tab {
+    appearance: none; font: inherit; font-size: 12px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center; gap: 7px;
+    min-height: 46px;                    /* comfortable thumb target */
+    border: 1px solid transparent; border-radius: 11px;
+    background: transparent; color: var(--ink-soft); cursor: pointer;
+  }
+  .mobile-tab.is-active {
+    color: var(--accent-ink);
+    background: linear-gradient(180deg, var(--accent-2), var(--accent));
+    box-shadow: 0 6px 16px -8px color-mix(in srgb, var(--accent) 70%, transparent);
+  }
+  .mobile-tab-icon { font-size: 15px; }
+
+  .mobile-ai-jump {
+    position: fixed; right: 14px; bottom: calc(70px + env(safe-area-inset-bottom));
+    z-index: 59; display: inline-flex; align-items: center;
+    min-height: 44px; padding: 0 16px;
+    font: inherit; font-size: 12.5px; font-weight: 700;
+    color: var(--accent-ink); border: 0; border-radius: 999px;
+    background: linear-gradient(180deg, var(--accent-2), var(--accent));
+    box-shadow: 0 10px 24px -8px color-mix(in srgb, var(--accent) 80%, transparent);
+  }
+  .mobile-ai-jump[hidden] { display: none; }
+
+  /* Collapsed by default so the prompt box and Generate are above the fold. */
+  .ai-compact-toggle {
+    display: flex; align-items: center; gap: 6px;
+    width: 100%; min-height: 42px; margin: 2px 0 4px;
+    font: inherit; font-size: 12.5px; font-weight: 700; color: var(--ink-soft);
+    background: transparent; border: 1px dashed var(--line-strong);
+    border-radius: 9px; cursor: pointer;
+  }
+  .ai-pane:not(.is-compact-open) .ai-tags,
+  .ai-pane:not(.is-compact-open) .ai-context { display: none; }
+  .ai-pane.is-compact-open .ai-compact-toggle .ai-adv-chevron { transform: rotate(90deg); }
+
+  /* Keep the primary action reachable while the dock scrolls. */
+  .ai-actions {
+    position: sticky; bottom: 0; z-index: 2;
+    background: linear-gradient(180deg, transparent, var(--glass-solid) 40%);
+    padding-top: 10px; padding-bottom: 6px;
+  }
+  .ai-stream { max-height: 34vh; }
+}
+
+/* iOS zooms the page when a focused field is under 16px — only relevant on
+   touch, so it is scoped to wide-or-narrow touch screens alike. */
+@media (hover: none), (pointer: coarse) {
+  input, textarea, select { font-size: 16px !important; }
+}
+
+/* Touch screens at any width: anything that only appeared on hover would never
+   appear at all, and small targets are unhittable with a thumb. */
+@media (hover: none), (pointer: coarse) {
+  .b-handle, .b-kind, .b-tools { opacity: 1 !important; }
+  .b-tools { display: flex; gap: 2px; }
+  .b-tools .mini-btn, .b-tools .b-tool { min-width: 38px; min-height: 38px; }
+  .mini-btn { width: 34px; height: 34px; }
+  .chip { padding: 7px 11px; }
+  .pane-header { padding: 10px 12px; }
 }
 
 *::-webkit-scrollbar { width: 10px; height: 10px; }

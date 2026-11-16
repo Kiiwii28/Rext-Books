@@ -91,6 +91,11 @@
           <input id="ai-count" type="number" min="1" max="20" value="3" />
         </label>
 
+        <button id="ai-compact-toggle" class="ai-compact-toggle" type="button" aria-expanded="false">
+          <span class="ai-adv-chevron">▸</span>
+          <span class="ai-tag-label">Tone, depth &amp; context</span>
+        </button>
+
         <div class="ai-tags">
           <div class="ai-tag-group">
             <span class="ai-tag-label">Tone</span>
@@ -211,6 +216,20 @@
       </div>
     </aside>
   </main>
+
+  <!-- Mobile-only chrome. Every rule that shows these lives inside the
+       max-width: 900px media query, so desktop never sees them. -->
+  <button id="mobile-ai-jump" class="mobile-ai-jump" type="button" hidden>
+    ✨ AI for this block
+  </button>
+  <nav id="mobile-nav" class="mobile-nav" aria-label="Switch panel">
+    <button class="mobile-tab is-active" data-view="tree" type="button" aria-pressed="true">
+      <span class="mobile-tab-icon" aria-hidden="true">☰</span><span>Outline</span>
+    </button>
+    <button class="mobile-tab" data-view="ai" type="button" aria-pressed="false">
+      <span class="mobile-tab-icon" aria-hidden="true">✨</span><span>AI Assistant</span>
+    </button>
+  </nav>
 
   <div id="export-modal" class="modal-backdrop" hidden>
     <div class="modal glass" role="dialog" aria-modal="true" aria-labelledby="export-title">
@@ -367,6 +386,22 @@
 
       <div class="modal-body">
         <div id="settings-status" class="ai-status" hidden></div>
+
+        <div id="settings-bundle-field" class="field key-bundle" hidden>
+          <span class="field-label">
+            <span class="kb-key" aria-hidden="true">🔑</span> Key bundle
+          </span>
+          <div id="settings-bundle-locked" class="settings-key-row">
+            <input id="settings-bundle-input" type="password" placeholder="Paste your key…"
+                   autocomplete="off" spellcheck="false" />
+            <button id="settings-bundle-unlock" type="button" class="mini-btn kb-unlock">Unlock</button>
+          </div>
+          <div id="settings-bundle-active" class="kb-active" hidden>
+            <span class="kb-badge">🔑 <b id="settings-bundle-label">—</b></span>
+            <button id="settings-bundle-lock" type="button" class="mini-btn">Lock</button>
+          </div>
+          <p id="settings-bundle-note" class="export-note"></p>
+        </div>
 
         <div class="field">
           <span class="field-label">Provider</span>

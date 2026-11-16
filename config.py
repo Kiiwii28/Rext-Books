@@ -18,8 +18,11 @@ ever learns whether one is configured, not its value).
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
+import secrets
 import sys
 import threading
 import time
@@ -174,11 +177,208 @@ PDF_RENDER_TIMEOUT = int(os.getenv("REXTBOOKS_PDF_TIMEOUT", "300"))
 
 
 # --------------------------------------------------------------------------- #
+#  Key bundles ("master keys")                                                 #
+# --------------------------------------------------------------------------- #
+#
+# One short passcode that fills in several provider keys at once — for a
+# non-technical user who shouldn't have to paste a Gemini key, a DeepSeek key
+# and a Pexels key separately.
+#
+# The bundles themselves are *configuration you own*, never something the app
+# writes or a browser can read:
+#
+#   1. the environment variable ``REXTBOOKS_KEY_BUNDLES`` holding JSON (this is
+#      the one to use on Render, where the container's disk is wiped), or
+#   2. ``key_bundles.json`` next to the app (gitignored) for local use.
+#
+# Shape — each top-level key is the passcode the user types:
+#
+#   {
+#     "rk-mum-8f3a91c2d5e64b70a1c9": {
+#       "label": "Mum",
+#       "provider": "gemini",              # optional; inferred from the keys
+#       "model": "gemini-3.5-flash-lite",  # optional
+#       "keys": {
+#         "gemini": "AIza…",
+#         "deepseek": "sk-…",
+#         "pexels": "…"
+#       }
+#     }
+#   }
+#
+# (``{"label": …, "gemini": "…"}`` with the keys at the top level also works.)
+#
+# A passcode is a *credential*: anyone holding it spends the keys inside it.
+# Use a long random one (the README shows a one-liner to generate them), never
+# anything guessable.
+#
+# Resolution is per request and per browser, never global: unlocking stores only
+# an opaque bundle id in the user's signed session cookie, so two people on the
+# same hosted instance each keep their own bundle. Nothing is written to
+# ``local_settings.json``, so one person unlocking cannot change another's setup,
+# and a redeploy cannot forget a bundle (the env var comes back with the image).
+
+BUNDLES_ENV = "REXTBOOKS_KEY_BUNDLES"
+_BUNDLES_FILE = BASE_DIR / "key_bundles.json"
+_BUNDLE_KEY_NAMES = ("deepseek", "gemini", "pexels")
+_BUNDLE_LLM_KEYS = ("gemini", "deepseek")   # order = "which provider wins" when unspecified
+
+_bundle_cache: tuple[object, dict] | None = None
+_bundles_warned = False
+_ctx = threading.local()   # per-request active bundle id
+
+
+def _bundle_id(passcode: str) -> str:
+    """An opaque id for a passcode — the passcode itself is never stored in the
+    session cookie or written anywhere."""
+    return hashlib.sha256(("rextbooks:" + passcode).encode("utf-8")).hexdigest()[:16]
+
+
+def _parse_bundles(raw: object) -> dict[str, dict]:
+    """Normalise the configured JSON into ``{id: {id, label, provider, model, keys}}``.
+
+    Anything malformed is skipped rather than raising — a typo in an env var
+    must not stop the app booting for someone who isn't using bundles at all."""
+    out: dict[str, dict] = {}
+    if not isinstance(raw, dict):
+        return out
+    for passcode, entry in raw.items():
+        if not isinstance(passcode, str) or len(passcode) < 8 or not isinstance(entry, dict):
+            continue
+        keys: dict[str, str] = {}
+        nested = entry.get("keys")
+        for k in _BUNDLE_KEY_NAMES:
+            value = None
+            if isinstance(nested, dict):
+                value = nested.get(k)
+            if not isinstance(value, str) or not value.strip():
+                value = entry.get(k)          # flat shorthand
+            if isinstance(value, str) and value.strip():
+                keys[k] = value.strip()
+        if not any(keys.get(k) for k in _BUNDLE_LLM_KEYS):
+            continue                          # no LLM key = nothing usable
+        provider = _clean(entry.get("provider")).lower()
+        provider = _PROVIDER_ALIASES.get(provider, provider)
+        if provider not in PROVIDERS:
+            provider = next((p for p in _BUNDLE_LLM_KEYS if keys.get(p)), DEFAULT_PROVIDER)
+        out[_bundle_id(passcode)] = {
+            "id": _bundle_id(passcode),
+            "label": _clean(entry.get("label")) or "Key bundle",
+            "provider": provider,
+            "model": _clean(entry.get("model")),
+            "keys": keys,
+        }
+    return out
+
+
+def _bundles() -> dict[str, dict]:
+    """Configured bundles, re-read when ``key_bundles.json`` changes."""
+    global _bundle_cache, _bundles_warned
+    try:
+        mtime: object = _BUNDLES_FILE.stat().st_mtime
+    except OSError:
+        mtime = None
+    if _bundle_cache is not None and _bundle_cache[0] == mtime:
+        return _bundle_cache[1]
+
+    merged: dict = {}
+    if mtime is not None:
+        try:
+            loaded = json.loads(_BUNDLES_FILE.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                merged.update(loaded)
+        except (OSError, json.JSONDecodeError) as exc:
+            if not _bundles_warned:
+                print(f"[config] ignoring {_BUNDLES_FILE.name}: {exc}", file=sys.stderr)
+                _bundles_warned = True
+    env_raw = _clean(os.getenv(BUNDLES_ENV))
+    if env_raw:
+        try:
+            loaded = json.loads(env_raw)
+            if isinstance(loaded, dict):
+                merged.update(loaded)
+        except json.JSONDecodeError as exc:
+            if not _bundles_warned:
+                print(f"[config] {BUNDLES_ENV} is not valid JSON: {exc}", file=sys.stderr)
+                _bundles_warned = True
+
+    _bundle_cache = (mtime, _parse_bundles(merged))
+    return _bundle_cache[1]
+
+
+def bundles_configured() -> bool:
+    return bool(_bundles())
+
+
+def resolve_passcode(passcode: str) -> dict | None:
+    """The bundle a typed passcode unlocks, or None. Compared against every
+    configured bundle (no early exit) with a constant-time check."""
+    passcode = _clean(passcode)
+    if not passcode:
+        return None
+    target = _bundle_id(passcode)
+    found: dict | None = None
+    for bundle_id, bundle in _bundles().items():
+        if hmac.compare_digest(bundle_id, target):
+            found = bundle
+    return found
+
+
+def set_active_bundle(bundle_id: str | None) -> None:
+    """Pin this request/thread to one bundle (called from the Flask hook that
+    reads the user's session). Unknown or absent id = no bundle."""
+    _ctx.bundle = bundle_id if bundle_id in _bundles() else None
+
+
+def get_active_bundle() -> dict | None:
+    bundle_id = getattr(_ctx, "bundle", None)
+    return _bundles().get(bundle_id) if bundle_id else None
+
+
+def clear_active_bundle() -> None:
+    _ctx.bundle = None
+
+
+def key_bundle_info() -> dict:
+    """Browser-safe view for the Settings dialog — labels and which providers
+    are covered, never a key or a passcode."""
+    bundle = get_active_bundle()
+    if bundle is None:
+        return {"configured": bool(_bundles()), "unlocked": False, "providers": []}
+    return {
+        "configured": True,
+        "unlocked": True,
+        "label": bundle["label"],
+        "providers": [k for k in _BUNDLE_KEY_NAMES if bundle["keys"].get(k)],
+        "provider": bundle["provider"],
+        "model": bundle["model"],
+    }
+
+
+# --------------------------------------------------------------------------- #
 #  API key                                                                     #
 # --------------------------------------------------------------------------- #
 
 _SETTINGS_FILE = BASE_DIR / "local_settings.json"
 _lock = threading.Lock()
+
+
+def get_secret_key() -> str:
+    """Key for signing the session cookie (which holds only an opaque bundle
+    id). Comes from ``REXTBOOKS_SECRET_KEY`` when set — recommended on a hosted
+    instance, so every deploy and instance signs alike — otherwise a random
+    value generated once and kept in ``local_settings.json``."""
+    env = _clean(os.getenv("REXTBOOKS_SECRET_KEY"))
+    if env:
+        return env
+    with _lock:
+        data = _read_settings()
+        key = _clean(data.get("sessionSecret"))
+        if not key:
+            key = secrets.token_hex(32)
+            data["sessionSecret"] = key
+            _write_settings(data)
+        return key
 
 
 def _read_settings() -> dict:
@@ -213,8 +413,11 @@ def _normalize(name: str | None) -> str:
 
 
 def get_llm_provider() -> str:
-    """The provider in effect: the Settings choice, else ``LLM_PROVIDER``,
-    else the default."""
+    """The provider in effect: an unlocked key bundle's own provider, then the
+    Settings choice, then ``LLM_PROVIDER``, then the default."""
+    bundle = get_active_bundle()
+    if bundle is not None and bundle["provider"] in PROVIDERS:
+        return bundle["provider"]
     saved = _clean(_settings_snapshot().get("llmProvider")).lower()
     saved = _PROVIDER_ALIASES.get(saved, saved)
     if saved in PROVIDERS:
@@ -232,6 +435,12 @@ def set_llm_provider(name: str) -> str:
         raise ValueError(
             f"unknown provider {name!r}; expected one of {', '.join(PROVIDERS)}"
         )
+    bundle = get_active_bundle()
+    if bundle is not None and key != bundle["provider"]:
+        raise RuntimeError(
+            f"The unlocked key bundle ({bundle['label']}) is set to "
+            f"{PROVIDERS[bundle['provider']]['label']} — lock it first to switch provider."
+        )
     with _lock:
         data = _read_settings()
         data["llmProvider"] = key
@@ -245,6 +454,9 @@ def get_llm_model(provider: str | None = None) -> str:
     ``LLM_MODEL`` for the active provider only, then the preset default."""
     name = _normalize(provider or get_llm_provider())
     preset = _preset(name)
+    bundle = get_active_bundle()
+    if bundle is not None and bundle["model"] and name == bundle["provider"]:
+        return bundle["model"]
     saved = _clean((_settings_snapshot().get("llmModels") or {}).get(name))
     if saved:
         return saved
@@ -266,6 +478,12 @@ def set_llm_model(model: str, provider: str | None = None) -> None:
     name = _normalize(provider or get_llm_provider())
     preset = _preset(name)
     model = _clean(model)
+    bundle = get_active_bundle()
+    if bundle is not None and bundle["model"] and name == bundle["provider"]:
+        raise RuntimeError(
+            f"The unlocked key bundle ({bundle['label']}) fixes this model — "
+            "lock it first to choose a different one."
+        )
     with _lock:
         data = _read_settings()
         models = dict(data.get("llmModels") or {})
@@ -325,10 +543,13 @@ def _settings_key(provider: str) -> str:
 
 
 def get_api_key(provider: str | None = None) -> str:
-    """The key actually in effect for ``provider``: one saved in Settings,
-    otherwise its .env / environment value (or a generic ``LLM_API_KEY`` for
-    the active provider)."""
+    """The key actually in effect for ``provider``: an unlocked key bundle,
+    then one saved in Settings, otherwise its .env / environment value (or a
+    generic ``LLM_API_KEY`` for the active provider)."""
     name = _normalize(provider or get_llm_provider())
+    bundle = get_active_bundle()
+    if bundle is not None and bundle["keys"].get(name):
+        return bundle["keys"][name]
     key = _settings_key(name)
     if key:
         return key
@@ -341,9 +562,12 @@ def get_api_key(provider: str | None = None) -> str:
 
 
 def api_key_source(provider: str | None = None) -> str:
-    """Where the provider's active key (if any) came from: "settings", "env",
-    or "none"."""
+    """Where the provider's active key (if any) came from: "bundle",
+    "settings", "env", or "none"."""
     name = _normalize(provider or get_llm_provider())
+    bundle = get_active_bundle()
+    if bundle is not None and bundle["keys"].get(name):
+        return "bundle"
     if _settings_key(name):
         return "settings"
     if _clean(os.getenv(_preset(name)["api_key_env"])):
@@ -355,8 +579,17 @@ def api_key_source(provider: str | None = None) -> str:
 
 def set_api_key(key: str, provider: str | None = None) -> None:
     """Save a key for one provider, or clear it (empty string) to fall back
-    to that provider's .env / environment value."""
+    to that provider's .env / environment value.
+
+    Refused while an unlocked key bundle supplies that provider: writing here
+    would change the shared settings file for everyone else on the instance."""
     name = _normalize(provider or get_llm_provider())
+    bundle = get_active_bundle()
+    if bundle is not None and bundle["keys"].get(name):
+        raise RuntimeError(
+            f"The {_preset(name)['label']} key is supplied by the unlocked key "
+            "bundle — lock it first to edit keys here."
+        )
     with _lock:
         data = _read_settings()
         keys = dict(data.get("providerKeys") or {})
@@ -537,12 +770,21 @@ _ENV_PEXELS_KEY = os.getenv("PEXELS_API_KEY", "").strip()
 
 
 def get_pexels_key() -> str:
+    bundle = get_active_bundle()
+    if bundle is not None and bundle["keys"].get("pexels"):
+        return bundle["keys"]["pexels"]
     with _lock:
         ui_key = (_read_settings().get("pexelsApiKey") or "").strip()
     return ui_key or _ENV_PEXELS_KEY
 
 
 def set_pexels_key(key: str) -> None:
+    bundle = get_active_bundle()
+    if bundle is not None and bundle["keys"].get("pexels"):
+        raise RuntimeError(
+            "The Pexels key is supplied by the unlocked key bundle — lock it "
+            "first to edit keys here."
+        )
     with _lock:
         data = _read_settings()
         key = (key or "").strip()

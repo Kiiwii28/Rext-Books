@@ -4,7 +4,7 @@
 // build to someone else, with their own key saved locally on their machine
 // and never sent back to the browser once saved) costs nothing.
 
-import { getSettings, saveSettings, testApiKey } from "./api.js";
+import { getSettings, saveSettings, testApiKey, unlockKeyBundle, lockKeyBundle } from "./api.js";
 import * as store from "./store.js";
 import { mountCombo, CUSTOM } from "./combo.js";
 
@@ -69,6 +69,11 @@ export async function mountSettings(refs) {
   els.testBtn.addEventListener("click", onTest);
   els.saveBtn.addEventListener("click", onSave);
   els.removeBtn.addEventListener("click", onRemove);
+  els.bundleUnlock.addEventListener("click", onUnlockBundle);
+  els.bundleLock.addEventListener("click", onLockBundle);
+  els.bundleInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); onUnlockBundle(); }
+  });
   els.blurbReset.addEventListener("click", () => { els.blurbInput.value = blurbDefault; });
 
   // Pasting a key is enough: commit it on Enter or when the field is left, so
@@ -162,6 +167,25 @@ function applyLlmState(s) {
       `or pick "Custom model…" to type any name ${info.label} accepts.`
     : "";
 
+  // A key bundle ("master key") supplies keys, and optionally the provider and
+  // model, for this browser session only. Anything it supplies is disabled here
+  // rather than silently ignored — editing it would change the shared file that
+  // other people on the same instance are using.
+  const bundle = s.keyBundle || { configured: false, unlocked: false };
+  const managed = bundle.unlocked ? (bundle.providers || []) : [];
+  els.providerSelect.disabled = !!bundle.unlocked;
+  els.keyInput.disabled = managed.includes(s.provider);
+  els.pexelsInput.disabled = managed.includes("pexels");
+  if (bundle.unlocked) {
+    els.keyInput.placeholder = managed.includes(s.provider)
+      ? `Supplied by the "${bundle.label}" key bundle`
+      : els.keyInput.placeholder;
+    els.pexelsInput.placeholder = managed.includes("pexels")
+      ? `Supplied by the "${bundle.label}" key bundle`
+      : els.pexelsInput.placeholder;
+  }
+  paintKeyBundle(bundle);
+
   els.keyLabel.textContent = `${label} API key`;
   els.keyDest.textContent = label;
   els.keyInput.value = "";
@@ -209,9 +233,67 @@ function formatDuration(ms) {
 
 function close() { els.backdrop.hidden = true; }
 
+/** The "master key" field: hidden entirely unless the server has bundles
+ *  configured, so a normal single-user install never sees it. */
+function paintKeyBundle(bundle) {
+  const visible = !!bundle.configured;
+  els.bundleField.hidden = !visible;
+  if (!visible) return;
+  const unlocked = !!bundle.unlocked;
+  els.bundleLocked.hidden = unlocked;
+  els.bundleActive.hidden = !unlocked;
+  els.bundleInput.value = "";
+  if (unlocked) {
+    els.bundleLabel.textContent = bundle.label || "Key bundle";
+    const which = (bundle.providers || []).join(", ") || "none";
+    els.bundleNote.textContent =
+      `Unlocked for this browser — ${which} supplied by the bundle` +
+      (bundle.model ? `, model fixed to ${bundle.model}` : "") +
+      `. Provider and key fields are managed here; lock it to edit them yourself.`;
+  } else {
+    els.bundleNote.textContent =
+      "One key that fills in every provider key at once — no separate Gemini/" +
+      "DeepSeek/Pexels keys needed. It unlocks this browser only and is never " +
+      "stored on this machine.";
+  }
+}
+
+async function onUnlockBundle() {
+  const passcode = els.bundleInput.value.trim();
+  if (!passcode) return;
+  els.bundleUnlock.disabled = true;
+  setInline("Unlocking…", "busy");
+  try {
+    const s = await unlockKeyBundle(passcode);
+    applyLlmState(s);
+    paintPexelsUsage(s);
+    els.bundleInput.value = "";
+    setInline(`Unlocked — using the "${s.keyBundle.label}" keys.`, "ok");
+  } catch (err) {
+    setInline(String(err.message || err), "err");
+  } finally {
+    els.bundleUnlock.disabled = false;
+  }
+}
+
+async function onLockBundle() {
+  els.bundleLock.disabled = true;
+  try {
+    const s = await lockKeyBundle();
+    applyLlmState(s);
+    paintPexelsUsage(s);
+    setInline("Locked — back to this machine's own keys.", "ok");
+  } catch (err) {
+    setInline(String(err.message || err), "err");
+  } finally {
+    els.bundleLock.disabled = false;
+  }
+}
+
 function paintStatus(s) {
   const who = s.providerLabel || "the selected provider";
   const map = {
+    bundle: `✓ Using the ${who} key from your key bundle.`,
     settings: `✓ Using the ${who} key saved here in Settings.`,
     env: `✓ Using the ${who} key from this machine's .env file.`,
     none: `⚠ No ${who} API key configured yet — generation won't work until you add one below.`,

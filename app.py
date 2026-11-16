@@ -8,14 +8,17 @@ Then open http://127.0.0.1:5000
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
+import threading
+import time
 
 import requests
 from flask import (
     Flask, Response, jsonify, render_template, request,
-    send_from_directory, stream_with_context,
+    send_from_directory, session, stream_with_context,
 )
 from werkzeug.utils import secure_filename
 
@@ -41,6 +44,30 @@ app = Flask(__name__)
 # request means an edit is always picked up on the very next reload, no hard
 # refresh required.
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
+
+# The session cookie only ever holds an opaque key-bundle id (see config.py);
+# the passcode itself is never stored. A stable signing key matters on a hosted
+# instance: without one, everyone would be logged out of their bundle on every
+# restart/redeploy.
+app.secret_key = config.get_secret_key()
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=os.getenv("REXTBOOKS_HTTPS", "").strip() in ("1", "true", "yes"),
+)
+
+
+@app.before_request
+def _apply_key_bundle():
+    """Resolve the caller's key bundle for this request only. Thread-local
+    rather than global state, so two people using the same instance each keep
+    their own bundle."""
+    config.set_active_bundle(session.get("bundle"))
+
+
+@app.teardown_request
+def _clear_key_bundle(_exc=None):
+    config.clear_active_bundle()
 
 
 def _slug(text: str) -> str:
@@ -95,6 +122,9 @@ def _settings_payload() -> dict:
         "blurbDefault": config.DEFAULT_BLURB_TEMPLATE,
         "hasPexelsKey": bool(config.get_pexels_key()),
         "pexelsUsage": config.get_pexels_usage(),
+        # "Master key" state: whether bundles are configured at all, and if one
+        # is unlocked for this browser, which providers it supplies.
+        "keyBundle": config.key_bundle_info(),
     }
 
 
@@ -113,22 +143,84 @@ def api_save_settings():
                      "pexelsApiKey is required"
         }), 400
     # Provider first: a model/key sent alongside it belongs to that provider.
-    if "provider" in data:
-        try:
+    try:
+        if "provider" in data:
             config.set_llm_provider(data.get("provider") or "")
-        except ValueError as exc:
-            return jsonify({"error": str(exc)}), 400
-    target = data.get("provider") or config.get_llm_provider()
-    if "model" in data:
-        config.set_llm_model(data.get("model") or "", provider=target)
-    if "apiKey" in data:
-        config.set_api_key(data.get("apiKey") or "", provider=target)
+        target = data.get("provider") or config.get_llm_provider()
+        if "model" in data:
+            config.set_llm_model(data.get("model") or "", provider=target)
+        if "apiKey" in data:
+            config.set_api_key(data.get("apiKey") or "", provider=target)
+    except (ValueError, RuntimeError) as exc:
+        # RuntimeError = an unlocked key bundle supplies this, so writing would
+        # change the shared settings file for everyone else on the instance.
+        return jsonify({"error": str(exc)}), 400
     if "author" in data:
         config.set_author(data.get("author") or "")
     if "blurbTemplate" in data:
         config.set_blurb_template(data.get("blurbTemplate") or "")
     if "pexelsApiKey" in data:
-        config.set_pexels_key(data.get("pexelsApiKey") or "")
+        try:
+            config.set_pexels_key(data.get("pexelsApiKey") or "")
+        except RuntimeError as exc:
+            return jsonify({"error": str(exc)}), 400
+    return jsonify(_settings_payload())
+
+
+# --- key bundles ("master keys") ------------------------------------------ #
+# A passcode fills in every provider key at once. Only an opaque id goes into
+# the signed session cookie, so unlocking is per-browser: two people on the
+# same instance never overwrite each other's keys. Attempts are rate-limited
+# per client so a short passcode can't be brute-forced.
+
+_UNLOCK_WINDOW = 300          # seconds
+_UNLOCK_MAX_ATTEMPTS = 10
+_unlock_attempts: dict[str, list[float]] = {}
+_unlock_lock = threading.Lock()
+
+
+def _unlock_client() -> str:
+    return request.headers.get("X-Forwarded-For", request.remote_addr or "local").split(",")[0].strip()
+
+
+def _unlock_allowed() -> bool:
+    now = time.time()
+    with _unlock_lock:
+        tries = [t for t in _unlock_attempts.get(_unlock_client(), []) if now - t < _UNLOCK_WINDOW]
+        _unlock_attempts[_unlock_client()] = tries
+        return len(tries) < _UNLOCK_MAX_ATTEMPTS
+
+
+def _unlock_record_failure() -> None:
+    with _unlock_lock:
+        _unlock_attempts.setdefault(_unlock_client(), []).append(time.time())
+
+
+@app.post("/api/settings/unlock")
+def api_settings_unlock():
+    data = request.get_json(silent=True) or {}
+    passcode = (data.get("passcode") or "").strip()
+    if not config.bundles_configured():
+        return jsonify({"error": "No key bundles are configured on this server."}), 400
+    if not _unlock_allowed():
+        return jsonify({"error": "Too many attempts — wait a few minutes and try again."}), 429
+    bundle = config.resolve_passcode(passcode)
+    if bundle is None:
+        _unlock_record_failure()
+        return jsonify({"error": "That key isn't valid."}), 401
+    session.clear()                     # fresh session; nothing from before is trusted
+    session["bundle"] = bundle["id"]
+    session.permanent = True
+    # before_request already ran for this request, so pin the bundle here too —
+    # otherwise the payload would report the state from *before* unlocking.
+    config.set_active_bundle(bundle["id"])
+    return jsonify(_settings_payload())
+
+
+@app.post("/api/settings/lock")
+def api_settings_lock():
+    session.pop("bundle", None)
+    config.clear_active_bundle()
     return jsonify(_settings_payload())
 
 

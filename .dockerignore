@@ -17,5 +17,8 @@ __pycache__/
 .env
 local_settings.json
 prompts.local.json
+# Key bundles hold real API keys; on Render they come from the
+# REXTBOOKS_KEY_BUNDLES env var instead of a baked-in file.
+key_bundles.json
 error.log
 *.log
