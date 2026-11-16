@@ -9,6 +9,555 @@ From 2026-09-20 onward, entries are logged at the time each change is made.
 
 ---
 
+## 2026-11-16 (evening)
+
+**Feature: LaTeX math now renders (was showing raw `$…$`).** Reported with a
+generated section whose formulas ("`$CY = \frac{V \times S}{T}$`") appeared as
+plain text.
+
+- **What already existed:** only `md.ESCAPED_CHARS.append("$")` in
+  `rendering.py`, which consumes `\$42`-style escapes so a stray backslash
+  doesn't leak through. There was no MathJax/KaTeX anywhere (the `katex` hits in
+  `docs/` are Mermaid's own stylesheet).
+- **Approach: server-side LaTeX → MathML** in `rendering.py`, not a client-side
+  KaTeX/MathJax. Reason: `render_markdown` is the single render used by the live
+  preview, PDF, Pages and (via `book_to_html`) EPUB, and Chromium renders MathML
+  Core natively while EPUB3 supports MathML — so there is no CDN dependency, no
+  script-timing problem in the headless export passes, and exports match the
+  preview exactly. New dependency: **`latex2mathml`** (pure Python).
+- **Delimiters**: `$…$`, `$$…$$`, `\(…\)`, `\[…\]`. Guards: a `$` must not be
+  backslash-escaped, no space just inside the pair, inline math stays on one
+  line, and the body must contain a letter or a TeX command — that last rule is
+  what keeps currency out ("$5 and $7", "$5-$7" are left alone). Fenced blocks
+  and inline code spans are split out first and never touched, so `$x$` inside
+  code stays literal. Invalid TeX raises inside `latex2mathml` and the source is
+  left exactly as written (no worse than before). Missing package degrades to
+  the same pass-through.
+- **Styling**: `.math-block` (centred, overflow-x) and `.math-inline`
+  (nowrap) added to `style.css`, `export.py`'s print CSS and `epub.py`'s
+  `_epub_css`. Display math is wrapped in its own `<div>` so it can't be split
+  across a PDF page (`break-inside: avoid`).
+- Verified: 10 render cases (inline, `$$`, paren/bracket, code fence, inline
+  code, currency, escaped dollar, invalid TeX, table cell) all behave; in a real
+  browser 9 `<math>` elements render with real dimensions and the currency/code
+  text is untouched (screenshot checked); EPUB contains `<math>`/`<mfrac>` in
+  the chapter XHTML plus the new CSS; a PDF exported from a scratch server
+  contains the formula as real MathML glyphs (𝑪𝒀 = 𝑽 × 𝑺 over 𝑻 in the
+  extracted text, no raw `\frac`), and the print stylesheet rasterised through
+  headless Chromium shows a correctly stacked fraction.
+- `rendering.py`, `export.py`, `epub.py`, `requirements.txt` and
+  `static/css/style.css` synced to `dist-portable/Rextbooks/`; `latex2mathml`
+  installed into `dist-portable/Rextbooks/pylibs` from the main `.venv`. Server
+  restarted.
+
+## 2026-11-16 (later)
+
+**Fix: "⚠ diagram could not be rendered" — the model invented an arrow token.**
+Reported with a generated `sequenceDiagram` whose messages used `A->-B: …`.
+Mermaid's parser rejected it ("Trying to inactivate an inactive participant"),
+so the reader got the error box and the raw source instead of a diagram.
+
+- **Reproduced against mermaid@10.9.1** (the client's pinned build): in a
+  sequenceDiagram `->` and `-->` are tolerated, but `->-` is a parse error; in
+  `flowchart` / `graph` / `stateDiagram` / `classDiagram` a bare `->` is a parse
+  error while `-->` is valid. `-->`, `-->>`, `-.->`, `==>` are all fine.
+- **`rendering.py` now repairs Mermaid source at render time**
+  (`_repair_mermaid_source` / `_repair_mermaid_blocks`): `->-` → `->>`,
+  `--->` → `-->>` in sequence diagrams, and a bare `->` (with or without
+  spaces) → `-->` in flowchart/graph/state/class diagrams. Lines containing
+  quotes are skipped so a literal label like `A["a -> b"]` is never rewritten.
+  Running it on every render (not just at generation) also heals diagrams
+  already saved to books, and covers PDF/EPUB/Pages, which all share
+  `render_markdown`. It runs after the text-fence rescue, so a diagram that
+  arrived in a ```text fence is repaired too.
+- **Prompt guardrail** (`prompts.defaults.json`, `content.defaults.diagram_compact`):
+  "Use real Mermaid arrows only: --> in flowcharts, graphs and state diagrams;
+  ->> or -->> in sequence diagrams — never ->-, a bare -> in a flowchart, or =>."
+- Verified offline (broken sequence repaired; valid sequence untouched;
+  flowchart/state arrows fixed; `-.->` and `==>` preserved; quoted labels
+  untouched; text-fenced diagram rescued and repaired) and end to end: the
+  broken markdown through the live `/render` endpoint comes back as `->>`, and
+  that exact served source parses and renders in the browser against
+  mermaid@10.9.1.
+- `rendering.py` + `prompts.defaults.json` re-synced to
+  `dist-portable/Rextbooks/`; server restarted.
+
+## 2026-11-16 (morning)
+
+**Fix: Gemini still wrote ~40% of DeepSeek's length at Length = High.** Reported
+with two generated files of the same section: Gemini 763 words total / 618 prose
+/ 3 `##` sections vs DeepSeek 1,782 / 1,702 / 7. Not a context-window limit —
+the same model produced 2,500-word sections in testing — it simply ignored the
+word-count instruction, and run-to-run variance is large.
+
+- **Measured first.** Five prompt variants of the High-length text, each run
+  live on both providers. Adding a *structural* quota (number of `##`
+  subsections × paragraphs each) moved Gemini from 618 prose words to 1,100-2,600
+  depending on wording — Prose-vs-total, tables and code fences excluded.
+- **Chosen wording** (`content.defaults.length.high` in the golden file): "write
+  at least 1,500 words (1,600-2,000 is the sweet spot) across at least five `##`
+  subsections, each 2-4 substantial paragraphs", plus a six-angle coverage list
+  (mechanism, deployment, worked example with numbers, failure modes,
+  counter-arguments, where it pays off) and "if you covered the ground early, add
+  another section instead of stopping".
+- **Mechanical floor** (`app.py`): a prompt cannot guarantee this, so a finished
+  section under `_LENGTH_MIN_WORDS` (Low 0, Medium 500, High 1,700 prose words)
+  is extended once via `shared.length_extension` — the text so far is sent as the
+  assistant turn and the model is asked to add new sections at the end, never to
+  repeat. `MAX_LENGTH_EXTENSIONS = 1`; the overlap trimmer from the truncation
+  path also guards against restated text. Refines are excluded (`min_words=0`),
+  since a revision should not silently grow the draft, and list modes
+  (outline/subheadings/spark) never get a floor.
+- **Measured after**: Gemini 1,886 / 2,563 prose words (both extended from
+  ~1,400), DeepSeek 2,026 (no extension) — same band for the first time.
+  Offline tests cover: short→one extension, already-long→no extension,
+  still-short→stops after one, `min_words=0`→never extends, and the prose
+  counter ignoring fences/table rows. UI shows "N words so far — extending to
+  the requested length…" while the second round runs; generation at High now
+  sometimes makes two API calls (~20-40s).
+- `app.py` + `prompts.defaults.json` re-synced to `dist-portable/Rextbooks/`;
+  server restarted (102 prompt blocks now, `shared.length_extension` added).
+
+## 2026-11-16 (early)
+
+**Fix: every Gemini diagram came out as `flowchart LR`.** Reported from real
+generation: the diagram guidance ordered a left-to-right flow for long chains,
+and the model generalised that to *always* using `LR`, so every section got the
+same shape regardless of content.
+
+- **First, what the app can actually draw.** The client loads Mermaid **10.9.1**
+  (`mermaid-render.js`), so the menu has to be limited to that version. Rendered
+  a probe page in a real browser against the same CDN build: **17 types render**
+  (flowchart/graph, sequenceDiagram, stateDiagram-v2, classDiagram, erDiagram,
+  journey, gantt, pie, quadrantChart, mindmap, timeline, xychart-beta,
+  sankey-beta, block-beta, requirementDiagram, gitGraph, C4Context/C4Container)
+  and **six do not exist there** (`packet-beta`, `kanban`, `architecture-beta`,
+  `radar-beta`, `treemap-beta`, `zenuml`). The rest of the list that prompted
+  this (swimlanes, Wardley maps, Ishikawa, Venn, Cynefin, use-case diagrams) are
+  not Mermaid diagram types at all. `block-beta` only parsed once each block was
+  on its own line — noted in the help text.
+- **Golden prompt updated** (`prompts.defaults.json`, the single source of
+  truth): `content.defaults.diagram_compact` is now a per-type menu with when to
+  use each type, the explicit do-not-use list, a "match Mermaid's exact syntax —
+  malformed syntax shows an error box" warning with safe fallbacks, "vary the
+  type across subsections", and the same page-size limits as before (10-12
+  nodes, short labels, no LaTeX/HTML). `content.rules.diagram.on` gained a
+  RULE-level sentence to pick a fitting type rather than defaulting to a
+  left-to-right flowchart. `spark.defaults.diagram_size` got the same treatment
+  (it had the identical LR bias).
+- Verified live on `gemini-3.5-flash-lite` with Diagram frequency = High, three
+  different sections: **timeline, sequenceDiagram, pie, flowchart, mindmap** —
+  no more all-LR — and all **10 generated diagrams parse and render** in
+  Mermaid 10.9.1 (checked in the browser against the exact CDN build the app
+  uses). Prompt preview on the running server confirms the new text is live.
+- `prompts.defaults.json` re-synced to `dist-portable/Rextbooks/`; server
+  restarted (the golden file is read at import).
+- Note for later: if a `prompts.local.json` override exists for
+  `content.defaults.diagram_compact`, it shadows this golden change until that
+  block is reset in Settings → Advanced.
+
+## 2026-11-15 (late night)
+
+**Feature: prompt text moved out of code into a golden JSON file, editable from
+Settings → Advanced.** Requested by the user: one authoritative file the app is
+"injected" from, a UI to tweak it (e.g. what "Beginner" or "Technical" mean),
+and a reset that reverts to the *current* golden text — so a later prompt fix in
+the repo also flows into a reset.
+
+- **`prompts.defaults.json`** (repo root, committed) now holds every prompt
+  string the app sends: 101 blocks across 8 groups (Shared, Outline &
+  subheadings, Content, Tone & depth, Context & task, Spark, Spark modes, Image
+  search). Each block carries `group`, `label`, `help`, `tier` and `text`.
+  Blocks with `"tier": "careful"` are parsed by the app (the `1. ` list format,
+  the `mermaid` fence info string, ```image-search blocks, Spark's `# ` title
+  line, the image judge's one-word verdict) and the panel shows ⚠ for those.
+- **`prompt_store.py`** loads the golden file at import (missing/invalid =
+  clear RuntimeError, since a silent fallback would mean running prompts nobody
+  can find) and resolves `get(key)` against **`prompts.local.json`** (sparse
+  overrides, gitignored, mtime-cached). `blocks()`, `set_overrides()`,
+  `reset()` and `check_placeholders()` back the API; writes are atomic
+  (tmp + replace) and UTF-8.
+- **Reset semantics are exactly as asked**: an override is *deleted*, never
+  snapshotted, so reset always yields whatever `prompts.defaults.json` says at
+  that moment. Verified by mutating the golden text in-process and confirming
+  the reset prompt picked it up.
+- **Refactor with no behaviour change**: `prompts.py`, `sparks.py` and
+  `images.py` now only choose and assemble blocks. `SYSTEM_PROMPTS`,
+  `_TONE_HINT`, `_DEPTH_HINT`, `OVERRIDE_NOTE`, `CONTINUATION_PROMPT`,
+  `DEFAULT_TEMPLATES`, Spark mode text and the image judge/rewrite prompts are
+  gone from code; `style_line()`, `override_note()` and `continuation_prompt()`
+  read live (overrides apply on the next generation, no restart).
+  **Golden test: captured 60 assembled prompt sets before the refactor
+  (3 modes × length × diagram/image frequency, no-images/no-diagrams,
+  use-images, summary/terminology toggles, every tone and depth, refine,
+  standing preference, em-dash ask, context + outline, all 10 Spark modes,
+  both image utility prompts) and re-captured after — 60/60 byte-identical.**
+  One character differed on the first pass (`("![...](...)")` vs `("![...]")`)
+  and was fixed in the golden file; the diff is why the test exists.
+- **API**: `GET /api/prompts`, `POST /api/prompts` (sparse updates, warn on
+  dropped placeholders, reject unknown keys), `POST /api/prompts/reset`
+  (`{keys:[…]}` or `{}` = all), `POST /api/prompts/preview` (assembles the real
+  messages for a mode/tone/depth/length).
+- **UI**: new *Advanced — prompt text* disclosure in ⚙ Settings
+  (`static/js/prompts-panel.js`, markup + CSS): group selector, filter,
+  per-block textarea, "edited" badge, ⚠ tier marker, per-block Reset, Save,
+  Reset all (confirmed), and a Preview pane that renders the assembled
+  system/user messages.
+- Verified end to end on an isolated server (temp `BOOKS_DIR`, temp settings
+  and temp `prompts.local.json`), driven in a real browser: 101 blocks render,
+  groups populate, editing `tone.technical` + Save persists (`modified: true`),
+  the Preview output contains the edit, per-block Reset restores the golden text
+  and clears the badge, Reset all returns all 101 to unmodified. Placeholder
+  validation flags a template that drops `{title}`; unknown keys are rejected
+  with 400.
+- `.gitignore` now ignores `prompts.local.json`. `CLAUDE.md` gained a "Prompts:
+  the words are data" section and the portable-sync list now includes
+  `prompt_store.py` + `prompts.defaults.json`; README documents the panel. All
+  changed files (including the new golden JSON) synced to
+  `dist-portable/Rextbooks/`.
+
+## 2026-11-15 (night)
+
+**Fix: Length = High produced roughly half the content on Gemini that it did on
+DeepSeek.** Reported from a real Gemini section ("Nature", 791 words) generated
+with Length set to High.
+
+- The Length DEFAULTs were adjectives, not targets: High was just "Go deep —
+  cover the subsection thoroughly, with more examples, nuance and supporting
+  detail than a brief overview would." DeepSeek reads that as ~2,000 words;
+  Gemini's lite models read it as ~800. Nothing in the prompt gave either model
+  a number to hit, so the setting was effectively provider-dependent.
+- `prompts.py` `_content_system_prompt` now gives concrete ranges — Low
+  200-350 words, Medium 600-900, High 1,400-2,000 — plus "use '##' subheadings
+  to structure it" and an explicit anti-padding clause ("reach that length with
+  real content … never with padding, repetition or restating the same point")
+  so the range can't be satisfied by waffle. Still DEFAULTS, so the user's own
+  prompt (or the book's standing preference) can override them.
+- Measured on the same section prompt with the same model: 3 runs of the new
+  High setting produced **2,033 / 1,713 / 1,772 words** with 8-10 `##`
+  headings, against 791 before. Wall-clock went from ~10s to ~27-32s per
+  section, which is expected for ~2.5x the output.
+- `prompts.py` re-synced to `dist-portable/Rextbooks/`; server restarted.
+
+## 2026-11-15 (evening)
+
+**Fix: sections still coming out cut off — Gemini sometimes ends the stream with
+no `finish_reason` at all.** Reported after the continuation fix with a
+Psychology section saved as 864 chars ending `- Mind: The private, internal`.
+
+- **Diagnosis (not a model-size problem).** Reproduced against the live API with
+  the user's own model (`gemini-3.5-flash-lite`) and the same prompt: one of
+  three attempts returned **152 chars in 2.7 s with `finish_reason: None`** —
+  the server just closed the SSE stream mid-sentence, no error chunk, no
+  terminal chunk ("…consciousness, memory, and"). The other two completed
+  normally (3.5k / 2.6k chars, `finish_reason: "stop"`). So it is an
+  intermittent provider-side abort, not an output-token limit and not the model
+  being too small. `meta["truncated"]` was false for it, which is why the
+  continuation added earlier never fired — that path only keyed off
+  `finish_reason` being "length"/"MAX_TOKENS".
+- **`llm.stream_chat` now reports it** as `meta["incomplete"]`: a stream that
+  ends without any terminal chunk never reported a finish reason.
+- **`app.py` continues on that signal too**, but only when the text visibly
+  stopped mid-thought (`_looks_unfinished`): an unterminated ``` fence, or a tail
+  that doesn't end on terminal punctuation / a closing bracket / emphasis marker
+  / a table row. The shape check is deliberately gated on "no finish_reason at
+  all", so a normal reply is never second-guessed, and it only applies to prose
+  modes (content, spark) — list modes rely on `truncated` alone, since a
+  finished numbered list legitimately ends without punctuation. Status copy now
+  distinguishes the two causes ("hit its output limit" vs "the reply stopped
+  early"), and `done` still carries `truncated` for the client's warning.
+- Verified offline (fake stream with `finish_reason=None` → one continuation,
+  stitched text, `done: {truncated: False, continuations: 1}`; shape-check table
+  including `- Mind: The private, internal` → unfinished, `**bold**` / `| a | b |`
+  / closed fences → finished) and live: a real Gemini stream deliberately closed
+  after 309 chars, no finish_reason → continued automatically, final text 7,362
+  chars ending on a complete sentence. Four unmodified live runs of the same
+  Psychology section completed cleanly at 6–10k chars.
+- Also found **two processes listening on port 5000 at once** again (PIDs 10052
+  and 20684, different parent shells). Both killed, one clean server started
+  (detached, logging to `%TEMP%\rext-server.log`) — a stale server is exactly
+  the kind of thing that makes a fix look like it "didn't work", since the
+  browser may be talking to the copy with the old code.
+- `app.py`, `llm.py` and `static/js/ai-dock.js` re-synced to
+  `dist-portable/Rextbooks/`.
+
+## 2026-11-15 (later still)
+
+**Gemini model list in Settings, and a pasted API key now saves itself.**
+
+- **More Gemini models to toggle between** (`config.PROVIDERS["gemini"]`).
+  `models` was `["gemini-3.8-flash"]`; it is now
+  `gemini-3.8-flash`, `gemini-3.6-flash`, `gemini-3.5-flash-lite`,
+  `gemini-3.1-flash-lite` (newest first, default first). That list is what
+  `/api/settings` returns as `models` and what `settings-panel.js` fills the
+  `<datalist>` behind the Model field with, so the field is a dropdown of
+  suggestions that still accepts any typed name. Requested by the user so they
+  can switch models while comparing which one stops timing out.
+- **A pasted key is saved without hunting for Save.** The key input had no
+  Enter handler at all — the dialog isn't a `<form>`, so pasting a key and
+  pressing Enter silently discarded it, and the key only persisted if the user
+  then clicked Save. `settings-panel.js` now commits the key on Enter and on
+  `change` (leaving the field), and "Test key" saves the key it just tested
+  when the test passes. New `savePastedKey()` deliberately does *not* call
+  `applyLlmState()`, which would repaint the model field from the server and
+  throw away a model name typed but not yet saved; it only clears the key box,
+  flips its placeholder to "saved — leave blank to keep", and updates the
+  status line. Values under 20 characters are treated as a half-finished paste
+  and left alone (Save still accepts anything).
+- **Test key works on a saved key**: with the field empty it now tests the key
+  already stored for that provider (the server already fell back to it) instead
+  of demanding a re-paste.
+- Settings copy and README updated to say the key saves on Enter and that the
+  Model field is a dropdown of known names.
+- Verified on an isolated scratch server (port 5099, temp `BOOKS_DIR` and
+  temp `config._SETTINGS_FILE` so the real key was never touched), driven in a
+  real browser: the dropdown lists all four Gemini models for both providers'
+  fields; pasting a key + Enter gives "API key saved on this machine ✓",
+  `/api/settings` reports `keySource: settings`, the temp settings file contains
+  it; a later Save of author/model keeps the key; the blur path saves too; and
+  reopening the dialog shows "saved — leave blank to keep". Already-correct
+  behaviour confirmed beforehand with the test client: unrelated saves
+  (author, model) preserve `providerKeys`.
+- `config.py`, `static/js/settings-panel.js` and `templates/index.html`
+  re-synced to `dist-portable/Rextbooks/`.
+
+## 2026-11-15 (later)
+
+**Fix: Gemini content generation stopping mid-sentence (silent output-limit
+cut-off).** Reported by the user: sections generated with Gemini stop
+mid-sentence and get saved that way.
+
+- **Diagnosis (reproduced against the real API, on the user's own preset).**
+  `gemini-3.5-flash-lite` via the OpenAI-compatible endpoint, no `max_tokens`
+  sent, so the provider applies its own output cap — and on that endpoint the
+  hidden thinking pass counts against the *same* budget. When it runs out, the
+  stream simply ends with `finish_reason: "length"` and the text stops
+  **mid-word** (confirmed: `max_tokens=150`/`400` both end `…depending on` /
+  `…number of vert`). That matches the evidence in the saved book — the
+  section "Deadlock Detection and Recovery — Content" ends `…If the vict`.
+  `app.py` already emitted a "hit its output limit" status for that case, but
+  `onDone` immediately overwrote it with "Content updated ✓", so the user had
+  no way to tell a cut-off from a clean finish, and the partial text was saved
+  as if complete.
+- **Automatic continuation instead of a cut-off** (`app.py`
+  `_stream_chat_response`, `prompts.CONTINUATION_PROMPT`). When a round ends
+  truncated, the server now re-asks the model with the text written so far as
+  the assistant turn and "continue from exactly where it stopped, output only
+  the remainder" as the final user turn, then appends the result. Up to
+  `MAX_CONTINUATIONS = 2` rounds; deltas keep streaming so the UI never goes
+  quiet. `_trim_continuation_overlap` drops a repeated opening — it checks
+  whether the start of the new text already appears in the tail of the old
+  (10+ chars), not just exact prefix repeats, because a model resuming inside
+  a word restarts at the start of that sentence (`…If the vict` → `If the
+  victim is chosen…`); when it does trim, the corrected text is sent as a
+  `revise` event so the client's buffer matches. Every truncation is logged to
+  stderr with the finish reason and character count.
+- **The cut is no longer reported as success.** The `done` event now carries
+  `{truncated, continuations}`; `api.js` passes it to `onDone`, and
+  `ai-dock.js` shows "Content saved, but the model hit its output limit — the
+  ending may be missing…" (error styling) instead of "Content updated ✓" when
+  even the continuation rounds ran out. Bulk generate counts and reports
+  cut-short blocks in its final summary (`streamOnce` now resolves
+  `{text, truncated}`).
+- Verified: (1) offline, with a fake `llm.stream_chat` — clean continuation
+  stitches correctly, an overlapping continuation is de-duplicated to one
+  clean sentence, and a stream that is *always* truncated stops after 2
+  continuations with `truncated: true` in the done payload; (2) live against
+  Gemini, forcing round 1 to cut at `max_tokens=260` — round 1 reported
+  `length`, round 2 finished `stop`, final text 9,964 chars ending on a
+  complete sentence with no duplicated content, `done: {truncated: False,
+  continuations: 1}`.
+- `app.py`, `prompts.py`, `static/js/ai-dock.js` and `static/js/api.js`
+  re-synced to `dist-portable/Rextbooks/`.
+- Note: sections already saved truncated stay truncated — regenerating (or
+  editing) that section is the only way to repair them.
+
+## 2026-11-15
+
+**Fix: Gemini diagrams still landing in ```text fences, and Gemini collapsing
+bulleted lists onto one line.** Reported by the user with two screenshots from a
+real Gemini section on management functions/roles: a management-cycle diagram
+shown as a dark code block of raw `flowchart LR` source, and Mintzberg's roles
+rendered as a paragraph of literal asterisks ("...organization: * **Figurehead:**
+... * **Leader:** ...").
+
+- **Renderer now recognises a diagram by its body, not just its fence label**
+  (`rendering.py`). The previous entry added a prompt RULE forbidding a figure
+  inside a ```text / ```plaintext fence; Gemini ignored it and did exactly that
+  again, so the prompt alone clearly isn't authoritative. A new
+  `_relabel_diagram_fences` pass treats a text/plain/mermaid/mmd/unlabelled
+  fence as a diagram when its first non-blank line starts with a Mermaid diagram
+  keyword (`flowchart`/`graph` + direction, `sequenceDiagram`, `erDiagram`, …) —
+  the same `<figure class="mermaid-figure">` output as a ```mermaid fence, so
+  the client, PDF and EPUB paths all pick it up unchanged. A text fence whose
+  contents is genuinely literal text is still rendered as a code block.
+- **Inline bullet runs reflowed into real lists** (`rendering.py`,
+  `_reflow_inline_lists`). Markdown only starts a list item at the beginning of
+  a line, so "lead-in: * item * item * item" on one line was rendering as
+  literal asterisks. A conservative pre-`md.convert` pass now splits such a line
+  into a proper `- ` list. Guardrails so prose can never be mangled: needs 2+
+  separators, never matches inside a code fence, skips headings/quotes/tables/
+  indented code/lines already starting with a list marker, never treats a lone
+  ` *word* ` emphasis marker as a separator, requires each item to be 8+ chars
+  and multi-word, and requires the lead-in to end with ":" unless there are 3+
+  items.
+- **Prompt** (`prompts.py` content RULES, and the same rule in `sparks.py`): a
+  new invariant telling the model to write every list as a real Markdown list,
+  one item per line, never inline `*` / `•` separated. RULE rather than DEFAULT
+  because the renderer's line-based parsing is what depends on it.
+- Verified: rendering the exact reported text through `render_markdown` (and
+  through the live `/render` endpoint via Flask's test client, with `BOOKS_DIR`
+  and `config._SETTINGS_FILE` pointed at temp dirs and the real `./books`
+  untouched) produces 2 mermaid figures, 3 `<li>` items, keeps a genuinely
+  literal ```text block as a code block, and leaves `*emphasis*` in prose alone.
+  No data migration needed — the fix is at render time, so already-saved broken
+  sections display correctly after a server restart.
+- `rendering.py`, `prompts.py` and `sparks.py` re-synced to `dist-portable/Rextbooks/`.
+
+## 2026-11-14 (later still)
+
+**Fix: mojibake in Gemini-generated text, and Gemini drawing diagrams as ASCII
+art.** Reported from a real Gemini section: "product or serviceâ€"" instead of
+"product or service—", plus a 2x2 efficiency/effectiveness diagram emitted as
+a ```text block made of box-drawing characters.
+
+- **Encoding (real bug, affected DeepSeek too).** `requests` falls back to
+  ISO-8859-1 for any `text/*` response that doesn't declare a charset, and
+  Gemini's SSE endpoint sends `text/event-stream` with no charset. So
+  `iter_lines(decode_unicode=True)` was decoding perfectly good UTF-8 bytes as
+  Latin-1: `—` (E2 80 94) became `â€"`, box-drawing characters became runs of
+  `â`, and it was written into the book that way. `llm.stream_chat` now sets
+  `resp.encoding = "utf-8"` before reading the stream — SSE is UTF-8 by spec,
+  so the spec wins over the header. The non-streaming paths were already
+  correct (`resp.json()` guesses UTF-8 from the bytes).
+  Note: this only fixes *new* generations — sections already saved with
+  mojibake keep it until regenerated (mapping is reversible if we want a
+  repair pass).
+- **Prompt (why Gemini drew ASCII art).** The diagram RULE said "every diagram
+  must be a valid Mermaid fenced code block ... with plain-text labels" — the
+  word "text" plus a model that likes to draw carried it into a ```text box.
+  The rule now names the failure modes explicitly: only ```mermaid, short
+  plain-word labels, no LaTeX/HTML, no ASCII art, no box-drawing characters,
+  and never a figure inside a ```text / ```plaintext fence. It lives in RULES
+  (an invariant the renderer depends on), not DEFAULTS, so it applies to every
+  provider and is not user-overridable; DeepSeek already complied, so nothing
+  changes for it.
+- Verified: a fake SSE response that reproduces requests' Latin-1 fallback
+  decodes cleanly (em dash + box-drawing intact, no `â`), the same text parses
+  correctly out of the `/api/ai/generate` event stream, and the built system
+  prompt contains the new prohibitions. `llm.py` + `prompts.py` re-synced to
+  `dist-portable/Rextbooks/`.
+
+---
+
+## 2026-11-14 (later)
+
+**Fix: Gemini preset pointed at retired model names; Test key too impatient.**
+Reported from a real run: Test key on `gemini-2.5-flash` returned HTTP 404
+("no longer available to new users … use models/gemini-3.8-flash"), and the
+same test against `gemini-3.8-flash` died at
+`Read timed out (read timeout=30)`.
+
+- `config.PROVIDERS["gemini"]`: default/known model is now
+  `gemini-3.8-flash` instead of `2.5-flash` / `2.5-pro` / `2.0-flash`, all of
+  which Google has retired for new keys. `utility_model` is now `None` (reuse
+  the content model) — the cheap non-thinking Flash models are precisely the
+  ones that get retired first, so depending on one was a latent break; the
+  hidden-thinking guard now rests on `llm.py`'s visible-output floor instead.
+  Comment records that a retired name fails loudly with a suggested
+  replacement, so the free-text Model field plus the Test-key message is the
+  intended recovery path — no code change needed next time.
+- `llm.py`: `_UTILITY_TOKEN_FLOOR` 256 → 1024 (a cap, not a cost), so a
+  thinking model's hidden pass cannot starve a 50-token judge call.
+  `test_key()` timeout was `(10, 30)` → `(10, 90)` — a cold first call to a
+  thinking model legitimately exceeded 30s; a timeout now says so in plain
+  language ("didn't answer within 90s … try Test key again, or choose a faster
+  model") instead of dumping a `HTTPSConnectionPool` traceback. A 404 from
+  Test key also appends "the model name may have been retired … paste that
+  into Model".
+- `_error_detail()` now unwraps Google's list-wrapped error body
+  (`[{"error": {...}}]`) — that's why the raw JSON was being shown verbatim
+  rather than just the message.
+- README / `.env.example` examples updated; `config.py` + `llm.py` re-synced to
+  `dist-portable/Rextbooks/`.
+- Verified with a fake transport: new default, no retired names offered,
+  utility call uses the content model with `max_tokens` 1024 and no
+  `reasoning_effort`, list-wrapped errors parsed, 404 hint present, timeout
+  wording correct, and DeepSeek's `reasoning_effort="none"` / `max_tokens=50`
+  path untouched.
+
+---
+
+## 2026-11-14
+
+**Selectable generation provider: DeepSeek ⇄ Google Gemini.** The app now talks
+to any OpenAI-compatible chat endpoint through one client, and the provider +
+model are a Settings choice rather than a hardcoded constant. Both providers
+are built in; each keeps its own API key and model, so switching back and forth
+never means re-entering anything, and the switch applies on the next request
+with no restart.
+
+- `config.py`: replaced `DEEPSEEK_MODEL` / `DEEPSEEK_BASE_URL` / `_ENV_API_KEY`
+  with a `PROVIDERS` preset table (label, base URL, default/known models,
+  utility model, context budget, env-var names, key placeholder) plus per-call
+  accessors — `get_llm_provider()`, `get_llm_model()`, `get_llm_base_url()`,
+  `get_api_key(provider)`, `llm_profile()` (server-only, has the key) and
+  `llm_status()`/`llm_providers()` (browser-safe: key presence only). The old
+  constants were import-time snapshots, which would have made a Settings switch
+  require a restart; resolution is now per call, same reasoning as the existing
+  `SEND_FILE_MAX_AGE_DEFAULT = 0`. `CONTEXT_CHAR_BUDGET` became
+  `get_context_char_budget()`, so the budget is sized per provider.
+- Keys are now stored per provider (`providerKeys` in `local_settings.json`).
+  The old single `deepseekApiKey` field is still read, and the first write
+  migrates it into `providerKeys.deepseek` — existing installs, including the
+  portable copy, keep working untouched.
+- New `llm.py` is the old `deepseek.py` body made provider-agnostic (base URL,
+  model and key come from the active preset). `deepseek.py` is now a three-line
+  alias so older imports keep working.
+- DeepSeek-specific guardrails, and how they're expressed for Gemini without
+  leaking into DeepSeek (all via preset capability flags, never `if provider`):
+  - `reasoning_effort="none"` (skips DeepSeek's hidden reasoning pass, which
+    otherwise eats a `max_tokens=50` judge call's whole budget and returns an
+    empty reply) is only sent to a provider whose preset says it supports it.
+    Gemini gets a non-thinking `utility_model` (`gemini-2.0-flash`) for those
+    short internal calls instead, plus a 256-token visible-output floor if a
+    caller explicitly asks for "none". `images.py` now passes `utility=True` and
+    no longer names DeepSeek.
+  - New provider-agnostic `finish_reason` handling in `llm.py`: a silent
+    truncation (`length` / `MAX_TOKENS`) sets `meta["truncated"]` and the SSE
+    wrapper emits a "response may be cut short" status instead of the stream
+    just ending; a safety block with no content (`SAFETY`,
+    `PROHIBITED_CONTENT`, `content_filter`, …) raises an error naming the
+    provider instead of looking like "the model returned nothing". Error
+    messages now include the provider's own `error.message`.
+- `app.py`: `/health` and `/api/settings` report provider/label/model;
+  `/api/settings` accepts `provider` + `model`; `/api/settings/test` tests the
+  selected provider/model and explains a missing key by provider name; the SSE
+  `start` payload carries provider/label/model.
+- Settings dialog: new **Provider** select (applies immediately on change) and
+  **Model** field (free text + per-provider suggestions, blank = default), both
+  repainted from server state; the key field is relabelled per provider and
+  shows "saved — leave blank to keep" like the Pexels field. "Remove key" is
+  scoped to the provider on screen. `ai-dock.js` no longer says "Contacting
+  DeepSeek".
+- Docs: README (provider setup, env vars, file tables) and `.env.example`.
+- **Verified** with a redirect-settings scratch instance + fake transport:
+  both providers' URL/model/params, no `reasoning_effort` sent to Gemini, no
+  utility-model override for DeepSeek, truncation/block/HTTP-error paths,
+  per-provider model and key persistence, legacy-key migration, `/health`, and
+  the real Settings UI driven in a browser (switch, save, reload, remove).
+  Every changed file was then synced into `dist-portable/Rextbooks/`, and the
+  embedded interpreter compiles them.
+
+Gotcha hit during verification, worth remembering: the first scratch server
+survived `kill_terminal` (the shell dies, the python child doesn't) and kept
+holding port 5099, so a second server bound the same port and requests were
+answered by the stale one — exactly the "two processes, one port" trap already
+noted in CLAUDE.md. Also, bare `python` in a fresh terminal here is *not* the
+interpreter that has the app's deps; use `.venv\Scripts\python.exe`.
+
+---
+
 ## 2026-10-05
 
 **EPUB validity investigation (no code changes).** User reported that every

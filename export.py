@@ -264,6 +264,11 @@ def _doc_css(p: dict[str, str]) -> str:
     .fig-placeholder .fig-icon {{ display: block; font-size: 15pt; margin-bottom: 3pt; opacity: .6; }}
     .fig-placeholder figcaption {{ font-size: 9pt; font-style: italic; }}
 
+    /* math — converted server-side to MathML (Chromium renders it natively) */
+    .math-block {{ margin: 1.1em 0; text-align: center; overflow-x: auto; break-inside: avoid; }}
+    .math-inline {{ white-space: nowrap; }}
+    .math-inline math, .math-block math {{ font-size: 1.05em; }}
+
     /* cover */
     .cover {{ break-after: page; padding-top: 22mm; }}
     .cover h1 {{ font-size: 34pt; }}

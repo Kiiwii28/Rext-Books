@@ -490,14 +490,18 @@ async function run() {
   els.stream.hidden = current.mode === "content";
   els.stream.textContent = "";
   const ctxNote = contextIds.length ? ` with ${contextIds.length} context block${contextIds.length > 1 ? "s" : ""}` : "";
-  setStatus((refine ? "Refining draft" : "Contacting DeepSeek") + ctxNote + "…", "busy");
+  setStatus((refine ? "Refining draft" : "Contacting the model") + ctxNote + "…", "busy");
   toggleBusy(true);
 
   let sectionId = null;
   let lastRendered = null;
 
   ctrl = streamGenerate(payload, {
-    onStart: () => setStatus(refine ? "Refining…" : "Generating…", "busy"),
+    onStart: (info) => setStatus(
+      (refine ? "Refining" : "Generating") +
+        (info?.label ? ` with ${info.label}` : "") + "…",
+      "busy",
+    ),
     onDelta: (_piece, full) => {
       if (current.mode === "content") {
         if (!sectionId) {
@@ -518,7 +522,7 @@ async function run() {
       // this final correction can never be swallowed by throttledRenderSection.
       if (current.mode === "content" && sectionId) { renderSection(sectionId, full); lastRendered = full; }
     },
-    onDone: async (full) => {
+    onDone: async (full, info) => {
       if (current.mode === "content") {
         full = stripUnresolvedPlaceholders(full);
         if (!sectionId) {
@@ -536,8 +540,21 @@ async function run() {
           // perfectly good image as broken.
           if (full !== lastRendered) renderSection(sectionId, full);
         }
-        setStatus(full.trim() ? "Content updated ✓" : "The model returned nothing.",
-                  full.trim() ? "ok" : "err");
+        if (!full.trim()) {
+          setStatus("The model returned nothing.", "err");
+        } else if (info?.truncated) {
+          // The server already asked the model to continue (see
+          // MAX_CONTINUATIONS in app.py) and it still stopped mid-thought —
+          // Gemini drops the stream without a finish_reason sometimes, so the
+          // text ends mid-sentence and must not be reported as a clean success.
+          setStatus(
+            "Content saved, but the reply stopped before it finished — the ending may " +
+            "be missing. Try generating again, or a shorter Length setting.",
+            "err",
+          );
+        } else {
+          setStatus("Content updated ✓", "ok");
+        }
       } else {
         const titles = parseList(full);
         if (titles.length && current.mode === "outline") {
@@ -561,8 +578,10 @@ async function run() {
 
 // ---- bulk generate: N sibling blocks, one independent request each ----------
 
-/** Run one generation to completion. Resolves with the full text (or "" if
- *  aborted). Writes into the tree exactly like the single-node flow. */
+/** Run one generation to completion. Resolves with `{ text, truncated }` —
+ *  text is "" if aborted, and `truncated` is true when the server's own
+ *  continuation rounds still ended at the model's output limit. Writes into
+ *  the tree exactly like the single-node flow. */
 function streamOnce(payload, mode, targetId) {
   return new Promise((resolve, reject) => {
     let sectionId = null;
@@ -585,7 +604,7 @@ function streamOnce(payload, mode, targetId) {
       onRevise: (full) => {
         if (mode === "content" && sectionId) { renderSection(sectionId, full); lastRendered = full; }
       },
-      onDone: async (full) => {
+      onDone: async (full, info) => {
         if (mode === "content") {
           full = stripUnresolvedPlaceholders(full);
           if (!sectionId) {
@@ -601,12 +620,12 @@ function streamOnce(payload, mode, targetId) {
           const titles = parseList(full);
           if (titles.length) store.appendChildren(targetId, "subheading", titles);
         }
-        resolve(full);
+        resolve({ text: full, truncated: !!info?.truncated });
       },
       onError: (msg) => reject(new Error(msg)),
     });
     ctrl = c;
-    c.signal.addEventListener("abort", () => resolve(""), { once: true });
+    c.signal.addEventListener("abort", () => resolve({ text: "", truncated: false }), { once: true });
   });
 }
 
@@ -637,6 +656,7 @@ async function runBulk() {
   els.stream.textContent = "";
 
   let done = 0;
+  let cutShort = 0;
   for (let i = 0; i < ids.length && bulkRunning; i++) {
     const hit = store.findNode(ids[i]);
     if (!hit) continue;
@@ -654,7 +674,7 @@ async function runBulk() {
     await store.flush();
 
     try {
-      const full = await streamOnce(
+      const { text: full, truncated } = await streamOnce(
         { mode, bookId: book.id, nodeId: targetId, count, prompt,
           tone, depth, refine: false, contextIds,
           useImages: mode === "content" && store.getSetting("useImages"),
@@ -668,6 +688,7 @@ async function runBulk() {
         mode, targetId,
       );
       if (full && full.trim()) done += 1;
+      if (truncated) cutShort += 1;
       else if (!bulkRunning) break;   // aborted
     } catch (err) {
       setStatus(`Stopped at “${label}”: ${err.message || err}`, "err");
@@ -685,8 +706,9 @@ async function runBulk() {
   updateDock(store.getState());
   store.flush();
   setStatus(
-    `Bulk generate: ${done} of ${total} done${done === total ? " ✓" : ""}`,
-    done === total ? "ok" : done ? "" : "err",
+    `Bulk generate: ${done} of ${total} done${done === total ? " ✓" : ""}`
+      + (cutShort ? ` — ${cutShort} stopped early and may be cut short` : ""),
+    cutShort ? "err" : done === total ? "ok" : done ? "" : "err",
   );
 }
 

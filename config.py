@@ -1,6 +1,10 @@
 """Configuration and secret loading for Rextbooks.
 
-The DeepSeek API key can come from (in priority order):
+Generation is provider-agnostic: every supported model is reached through an
+OpenAI-compatible Chat Completions endpoint, described by a preset in
+``PROVIDERS`` below and consumed by the single client in ``llm.py``.
+
+The API key for the selected provider can come from (in priority order):
   1. a key entered through the app's own Settings UI, persisted to
      ``local_settings.json`` next to the app — no file editing, no
      restart needed. This is what a packaged .exe hands to a non-technical
@@ -39,18 +43,125 @@ BASE_DIR = _app_dir()
 
 load_dotenv(BASE_DIR / ".env")
 
-DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash").strip()
-DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").strip().rstrip("/")
+# --------------------------------------------------------------------------- #
+#  LLM providers                                                              #
+# --------------------------------------------------------------------------- #
+#
+# One HTTP client (llm.py), several profiles. Everything below speaks the same
+# OpenAI-compatible Chat Completions wire format, so "supporting" a provider
+# means adding a preset here — not new client code — and switching between
+# them is just changing which preset is active.
+#
+# A preset is also where each provider's *behavioural* differences live, as
+# data rather than scattered `if provider == ...` branches:
+#
+#   supports_reasoning_effort
+#       DeepSeek accepts ``reasoning_effort``; ``"none"`` skips its hidden
+#       reasoning pass entirely, which is why the short internal calls in
+#       images.py ask for it (without it, a ``max_tokens=50`` judge call can
+#       spend its whole budget thinking and return nothing). Gemini's
+#       OpenAI-compatible layer has no equivalent switch, so the same intent
+#       is expressed through ``utility_model`` instead: a non-thinking model
+#       for those short calls, so there is no thinking pass to starve.
+#
+#   utility_model
+#       The cheap model for short internal calls (image judging, search-query
+#       rewriting). ``None`` = use the content model and cheapen it with
+#       ``reasoning_effort`` instead.
+#
+#   context_chars
+#       How much picked "extra context" / Spark source material may be sent.
+#       Sized to the model's real input window — switching to a smaller-
+#       context model without this would fail on any book with a sizeable
+#       outline, which is exactly the kind of breakage a provider swap should
+#       not cause.
+#
+# Resolution order for the active provider is: the Settings choice, then
+# ``LLM_PROVIDER``, then the default — the same "UI beats env" precedence API
+# keys already use, so switching in the UI is never silently overridden by a
+# stale shell variable.
+
+DEFAULT_PROVIDER = "deepseek"
+
+PROVIDERS: dict[str, dict] = {
+    "deepseek": {
+        "label": "DeepSeek",
+        "base_url": "https://api.deepseek.com",
+        "default_model": "deepseek-v4-flash",
+        "models": ["deepseek-v4-flash"],
+        "utility_model": None,
+        "context_chars": 400000,          # v4 has a 1M-token window
+        "supports_reasoning_effort": True,
+        "api_key_env": "DEEPSEEK_API_KEY",
+        "model_env": "DEEPSEEK_MODEL",
+        "base_url_env": "DEEPSEEK_BASE_URL",
+        "key_placeholder": "sk-…",
+        "keys_url": "https://platform.deepseek.com/api_keys",
+    },
+    "gemini": {
+        "label": "Google Gemini",
+        # Gemini's OpenAI-compatible layer — same wire format as the rest, so
+        # llm.py needs nothing Gemini-specific to talk to it.
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+        # Retired names are a live hazard here: Google answers a 404 for an
+        # old model ("This model ... is no longer available to new users")
+        # rather than silently aliasing it, so these defaults must be current.
+        # The field is free text, and a 404 from Test key names the suggested
+        # replacement in its message — that's the fastest way to catch a
+        # future retirement without a code change.
+        "default_model": "gemini-3.8-flash",
+        # Suggestions for the Settings model dropdown (a free-text field with a
+        # datalist, so anything a provider accepts can still be typed). Kept
+        # newest-first; the default is one of them. Add a name here whenever
+        # Google ships (or the user wants to toggle to) another one.
+        "models": [
+            "gemini-3.8-flash",
+            "gemini-3.6-flash",
+            "gemini-3.5-flash-lite",
+            "gemini-3.1-flash-lite",
+        ],
+        # No separate cheap model: the older non-thinking Flash models are the
+        # ones that get retired first (2.0/2.5 are already gone for new keys),
+        # so utility calls reuse the content model and rely on llm.py's raised
+        # visible-output floor instead of a reasoning_effort switch this
+        # provider doesn't have.
+        "utility_model": None,
+        "context_chars": 400000,          # ~1M-token input window
+        "supports_reasoning_effort": False,
+        "api_key_env": "GEMINI_API_KEY",
+        "model_env": "GEMINI_MODEL",
+        "base_url_env": "GEMINI_BASE_URL",
+        "key_placeholder": "AIza…",
+        "keys_url": "https://aistudio.google.com/apikey",
+    },
+}
+
+# Accepted spellings for ``LLM_PROVIDER`` / a Settings payload, so a natural
+# "google" doesn't silently fall back to DeepSeek.
+_PROVIDER_ALIASES = {"google": "gemini", "google-gemini": "gemini"}
+
+
+def _clean(value) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _preset(name: str | None) -> dict:
+    """A provider's preset. Never raises — an unknown name falls back to the
+    default, so a typo in an env var or a stale saved setting can't make the
+    app unbootable. Takes an already-resolved name (it never calls
+    ``get_llm_provider``) so callers may use it while holding the lock."""
+    key = _clean(name).lower()
+    key = _PROVIDER_ALIASES.get(key, key) or DEFAULT_PROVIDER
+    return PROVIDERS.get(key) or PROVIDERS[DEFAULT_PROVIDER]
+
 
 BOOKS_DIR = Path(os.getenv("BOOKS_DIR", BASE_DIR / "books"))
 BOOKS_DIR.mkdir(parents=True, exist_ok=True)
 
-# Total characters of "extra context" / Spark source material sent to the model.
-# DeepSeek v4 has a 1M-token window, so this can be large. Env-overridable.
-CONTEXT_CHAR_BUDGET = int(os.getenv("REXTBOOKS_CONTEXT_CHARS", "400000"))
-
-# Network timeouts (seconds) for the DeepSeek call: (connect, read).
-DEEPSEEK_TIMEOUT = (10, 300)
+# Network timeouts (seconds) for one LLM call: (connect, read). The read
+# timeout is per-chunk, not for the whole generation, so a long section is
+# fine as long as the stream keeps flowing.
+LLM_TIMEOUT = (10, 300)
 
 # Wall-clock ceiling (seconds) for one headless-Chrome PDF/EPUB-render pass.
 # The browser's own --virtual-time-budget flag (how long the page gets to
@@ -67,7 +178,6 @@ PDF_RENDER_TIMEOUT = int(os.getenv("REXTBOOKS_PDF_TIMEOUT", "300"))
 # --------------------------------------------------------------------------- #
 
 _SETTINGS_FILE = BASE_DIR / "local_settings.json"
-_ENV_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 _lock = threading.Lock()
 
 
@@ -84,45 +194,245 @@ def _write_settings(data: dict) -> None:
     tmp.replace(_SETTINGS_FILE)
 
 
-def get_api_key() -> str:
-    """The key actually in effect: a Settings-UI key if one is saved,
-    otherwise the .env / environment value."""
+def _settings_snapshot() -> dict:
     with _lock:
-        ui_key = (_read_settings().get("deepseekApiKey") or "").strip()
-    return ui_key or _ENV_API_KEY
+        return _read_settings()
 
 
-def api_key_source() -> str:
-    """Where the active key (if any) came from: "settings", "env", or "none"."""
+# --------------------------------------------------------------------------- #
+#  Active provider / model                                                    #
+# --------------------------------------------------------------------------- #
+#
+# Resolved per call rather than once at import: switching provider in
+# ⚙ Settings has to take effect on the very next generation, with no restart.
+
+def _normalize(name: str | None) -> str:
+    key = _clean(name).lower()
+    key = _PROVIDER_ALIASES.get(key, key)
+    return key if key in PROVIDERS else DEFAULT_PROVIDER
+
+
+def get_llm_provider() -> str:
+    """The provider in effect: the Settings choice, else ``LLM_PROVIDER``,
+    else the default."""
+    saved = _clean(_settings_snapshot().get("llmProvider")).lower()
+    saved = _PROVIDER_ALIASES.get(saved, saved)
+    if saved in PROVIDERS:
+        return saved
+    env = _clean(os.getenv("LLM_PROVIDER")).lower()
+    env = _PROVIDER_ALIASES.get(env, env)
+    if env in PROVIDERS:
+        return env
+    return DEFAULT_PROVIDER
+
+
+def set_llm_provider(name: str) -> str:
+    key = _PROVIDER_ALIASES.get(_clean(name).lower(), _clean(name).lower())
+    if key not in PROVIDERS:
+        raise ValueError(
+            f"unknown provider {name!r}; expected one of {', '.join(PROVIDERS)}"
+        )
     with _lock:
-        ui_key = (_read_settings().get("deepseekApiKey") or "").strip()
-    if ui_key:
+        data = _read_settings()
+        data["llmProvider"] = key
+        _write_settings(data)
+    return key
+
+
+def get_llm_model(provider: str | None = None) -> str:
+    """The model for ``provider`` (default: the active one). A model saved in
+    Settings wins, then the provider's own env var, then a generic
+    ``LLM_MODEL`` for the active provider only, then the preset default."""
+    name = _normalize(provider or get_llm_provider())
+    preset = _preset(name)
+    saved = _clean((_settings_snapshot().get("llmModels") or {}).get(name))
+    if saved:
+        return saved
+    env = _clean(os.getenv(preset["model_env"]))
+    if env:
+        return env
+    # LLM_MODEL is a convenience for whichever provider is active; it must
+    # not leak onto a second provider the user has also configured.
+    if name == get_llm_provider():
+        generic = _clean(os.getenv("LLM_MODEL"))
+        if generic:
+            return generic
+    return preset["default_model"]
+
+
+def set_llm_model(model: str, provider: str | None = None) -> None:
+    """Save the model for one provider; an empty string (or the preset
+    default) clears the override so the default applies again."""
+    name = _normalize(provider or get_llm_provider())
+    preset = _preset(name)
+    model = _clean(model)
+    with _lock:
+        data = _read_settings()
+        models = dict(data.get("llmModels") or {})
+        if model and model != preset["default_model"]:
+            models[name] = model
+        else:
+            models.pop(name, None)
+        if models:
+            data["llmModels"] = models
+        else:
+            data.pop("llmModels", None)
+        _write_settings(data)
+
+
+def get_llm_base_url(provider: str | None = None) -> str:
+    name = _normalize(provider or get_llm_provider())
+    preset = _preset(name)
+    env = _clean(os.getenv(preset["base_url_env"]))
+    if not env and name == get_llm_provider():
+        env = _clean(os.getenv("LLM_BASE_URL"))
+    return (env or preset["base_url"]).rstrip("/")
+
+
+def get_llm_utility_model(provider: str | None = None) -> str:
+    """The model for short internal calls — a preset's non-thinking model
+    where one exists, otherwise the content model."""
+    name = _normalize(provider or get_llm_provider())
+    return _preset(name)["utility_model"] or get_llm_model(name)
+
+
+def supports_reasoning_effort(provider: str | None = None) -> bool:
+    return bool(_preset(_normalize(provider or get_llm_provider()))["supports_reasoning_effort"])
+
+
+def get_context_char_budget(provider: str | None = None) -> int:
+    """Characters of picked extra context allowed for this provider.
+    ``REXTBOOKS_CONTEXT_CHARS`` overrides it for the active provider."""
+    name = _normalize(provider or get_llm_provider())
+    if name == get_llm_provider():
+        env = _clean(os.getenv("REXTBOOKS_CONTEXT_CHARS"))
+        if env.isdigit():
+            return int(env)
+    return int(_preset(name)["context_chars"])
+
+
+# --------------------------------------------------------------------------- #
+#  API key (one per provider, so switching never strands the other key)       #
+# --------------------------------------------------------------------------- #
+
+def _settings_key(provider: str) -> str:
+    data = _settings_snapshot()
+    key = _clean((data.get("providerKeys") or {}).get(provider))
+    if not key and provider == "deepseek":
+        # Before providers were selectable there was exactly one key field.
+        key = _clean(data.get("deepseekApiKey"))
+    return key
+
+
+def get_api_key(provider: str | None = None) -> str:
+    """The key actually in effect for ``provider``: one saved in Settings,
+    otherwise its .env / environment value (or a generic ``LLM_API_KEY`` for
+    the active provider)."""
+    name = _normalize(provider or get_llm_provider())
+    key = _settings_key(name)
+    if key:
+        return key
+    key = _clean(os.getenv(_preset(name)["api_key_env"]))
+    if key:
+        return key
+    if name == get_llm_provider():
+        return _clean(os.getenv("LLM_API_KEY"))
+    return ""
+
+
+def api_key_source(provider: str | None = None) -> str:
+    """Where the provider's active key (if any) came from: "settings", "env",
+    or "none"."""
+    name = _normalize(provider or get_llm_provider())
+    if _settings_key(name):
         return "settings"
-    if _ENV_API_KEY:
+    if _clean(os.getenv(_preset(name)["api_key_env"])):
+        return "env"
+    if name == get_llm_provider() and _clean(os.getenv("LLM_API_KEY")):
         return "env"
     return "none"
 
 
-def set_api_key(key: str) -> None:
-    """Save a key entered in Settings, or clear it (empty string) to fall
-    back to .env / the environment, if either is set."""
+def set_api_key(key: str, provider: str | None = None) -> None:
+    """Save a key for one provider, or clear it (empty string) to fall back
+    to that provider's .env / environment value."""
+    name = _normalize(provider or get_llm_provider())
     with _lock:
         data = _read_settings()
-        key = (key or "").strip()
+        keys = dict(data.get("providerKeys") or {})
+        legacy = _clean(data.pop("deepseekApiKey", ""))   # migrate the old single-key field
+        if legacy and not keys.get("deepseek"):
+            keys["deepseek"] = legacy
+        key = _clean(key)
         if key:
-            data["deepseekApiKey"] = key
+            keys[name] = key
         else:
-            data.pop("deepseekApiKey", None)
+            keys.pop(name, None)
+        if keys:
+            data["providerKeys"] = keys
+        else:
+            data.pop("providerKeys", None)
         _write_settings(data)
 
 
-def require_api_key() -> str:
-    key = get_api_key()
+def require_api_key(provider: str | None = None) -> str:
+    name = _normalize(provider or get_llm_provider())
+    key = get_api_key(name)
     if not key:
+        preset = _preset(name)
         raise RuntimeError(
-            "No DeepSeek API key configured yet. Add one in ⚙ Settings to start generating."
+            f"No {preset['label']} API key configured yet. Add one in ⚙ Settings "
+            f"({preset['label']} → API key), or set {preset['api_key_env']} in .env, "
+            "to start generating."
         )
     return key
+
+
+# --------------------------------------------------------------------------- #
+#  Resolved profile / browser-safe status                                     #
+# --------------------------------------------------------------------------- #
+#
+# ``llm_profile`` is server-side only (it includes the key) and is what
+# llm.py reads for each request. ``llm_status`` is the browser-safe view:
+# it says whether a key exists, never what it is.
+
+def llm_profile(provider: str | None = None) -> dict:
+    name = _normalize(provider or get_llm_provider())
+    preset = _preset(name)
+    return {
+        "provider": name,
+        "label": preset["label"],
+        "base_url": get_llm_base_url(name),
+        "model": get_llm_model(name),
+        "utility_model": get_llm_utility_model(name),
+        "api_key": get_api_key(name),
+        "api_key_env": preset["api_key_env"],
+        "supports_reasoning_effort": bool(preset["supports_reasoning_effort"]),
+        "context_chars": get_context_char_budget(name),
+    }
+
+
+def llm_status(provider: str | None = None) -> dict:
+    name = _normalize(provider or get_llm_provider())
+    preset = _preset(name)
+    return {
+        "provider": name,
+        "label": preset["label"],
+        "model": get_llm_model(name),
+        "defaultModel": preset["default_model"],
+        "models": list(preset["models"]),
+        "contextChars": get_context_char_budget(name),
+        "hasApiKey": bool(get_api_key(name)),
+        "keySource": api_key_source(name),
+        "keyPlaceholder": preset["key_placeholder"],
+        "keysUrl": preset["keys_url"],
+    }
+
+
+def llm_providers() -> list[dict]:
+    """Every supported provider with its own (browser-safe) status, so the
+    Settings dialog can show which ones already have a key."""
+    return [llm_status(name) for name in PROVIDERS]
 
 
 # --------------------------------------------------------------------------- #
@@ -219,8 +529,9 @@ def delete_custom_palette(key: str) -> bool:
 # --------------------------------------------------------------------------- #
 #
 # STUB: get a free key at https://www.pexels.com/api/ and paste it into
-# ⚙ Settings, or set PEXELS_API_KEY in a local .env file. Same precedence and
-# storage as the DeepSeek key above (Settings-UI value wins over .env/env).
+# ⚙ Settings, or set PEXELS_API_KEY in a local .env file. Same precedence as
+# the provider keys above (Settings-UI value wins over .env/env) — but a single
+# key for all providers, since Pexels isn't an LLM.
 
 _ENV_PEXELS_KEY = os.getenv("PEXELS_API_KEY", "").strip()
 

@@ -44,6 +44,14 @@ python app.py                # http://127.0.0.1:5000
 
 `sparks.py` is a parallel, structurally different generation path ("Spark"): cross-breeds exactly two existing nodes under one of ten fixed modes into a new sibling node, rather than extending the tree downward from one selection.
 
+### Prompts: the words are data, the assembly is code
+
+Every prompt string the app sends lives in `prompts.defaults.json` (repo root) — the **golden source of truth**. `prompt_store.py` loads it; `prompts.py`, `sparks.py` and `images.py` only decide *which* blocks to use, in what order, and how to join them. **Fixing or improving a prompt means editing the golden JSON, not a Python string** — that is the whole change, and there is no second copy to keep in sync.
+
+User tweaks live in `prompts.local.json` (same folder, gitignored) as *sparse* overrides written by Settings → Advanced; anything absent falls back to the golden file. `Reset` deletes the override, so a reset always lands on the golden file's *current* text, including later prompt fixes — never on a frozen snapshot. The golden file is read once at import (editing it needs a server restart); overrides are re-read per call, so UI edits apply to the next generation.
+
+Block ids are stable; renaming one silently drops any override for it. Blocks with `"tier": "careful"` are parsed by the app (list format for outline/subheadings, Mermaid fence info string, `image-search` blocks, the Spark `# ` title line, the image judge's one-word verdict) — the panel warns about these but does not prevent editing. When you change prompt text, re-run the golden check: assemble the matrix of prompts before/after (modes × length × diagram/image frequencies × no-images/no-diagrams × spark modes) and diff — nothing but the intended text should change.
+
 ### Export pipeline — one shared HTML render, three consumers
 
 `export.py`'s `book_to_html` (recursive over arbitrary tree depth, driven by the same palette system as the live preview) is the single source of truth for layout; `book_to_pdf` and `epub.py`'s `book_to_epub` both build on it rather than maintaining their own rendering:
@@ -57,7 +65,7 @@ python app.py                # http://127.0.0.1:5000
 
 ### The portable build is a second, manually-synced copy of the app
 
-`dist-portable/Rextbooks/` is a full standalone copy (embeddable Python + pre-installed deps in `pylibs/` + copies of every backend `.py` file, `templates/`, `static/`) built for zero-install handoff via `launcher.py` (runs on port 5001, specifically different from the dev server's 5000). **This is not a build artifact generated from the main tree — it's a hand-maintained duplicate.** Any change to `app.py`, `export.py`, `epub.py`, `compress.py`, or anything under `static/`/`templates/` needs the same file copied into `dist-portable/Rextbooks/` afterward, and a new third-party dependency needs `pip install --target dist-portable/Rextbooks/pylibs <pkg>` from the *main* `.venv` (so the wheel matches the embedded interpreter's exact Python version/platform) in addition to `requirements.txt`. See `README.md`'s "Packaging a copy for someone else" section for the full rebuild recipe.
+`dist-portable/Rextbooks/` is a full standalone copy (embeddable Python + pre-installed deps in `pylibs/` + copies of every backend `.py` file, `templates/`, `static/`) built for zero-install handoff via `launcher.py` (runs on port 5001, specifically different from the dev server's 5000). **This is not a build artifact generated from the main tree — it's a hand-maintained duplicate.** Any change to `app.py`, `export.py`, `epub.py`, `compress.py`, `prompt_store.py`, `prompts.defaults.json`, or anything under `static/`/`templates/` needs the same file copied into `dist-portable/Rextbooks/` afterward, and a new third-party dependency needs `pip install --target dist-portable/Rextbooks/pylibs <pkg>` from the *main* `.venv` (so the wheel matches the embedded interpreter's exact Python version/platform) in addition to `requirements.txt`. Note `prompts.defaults.json` is *data* the app cannot start without — a portable copy missing it raises a clear error at import. See `README.md`'s "Packaging a copy for someone else" section for the full rebuild recipe.
 
 ### Frontend state model
 

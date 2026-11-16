@@ -49,12 +49,30 @@ export const saveSettings = (partial) =>
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify(partial),
   }).then(j);
-export const testApiKey = (apiKey) =>
+export const testApiKey = (apiKey, provider, model) =>
   fetch("/api/settings/test", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ apiKey }),
+    body: JSON.stringify({ apiKey, provider, model }),
   }).then(j);
 export const getSparkModes = () => fetch("/api/spark-modes").then(j);
+
+// --- prompt text (Settings → Advanced) -----------------------------------
+export const getPrompts = () => fetch("/api/prompts").then(j);
+export const savePrompts = (blocks) =>
+  fetch("/api/prompts", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ blocks }),
+  }).then(j);
+export const resetPrompts = (keys) =>
+  fetch("/api/prompts/reset", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(keys ? { keys } : {}),
+  }).then(j);
+export const previewPrompt = (payload) =>
+  fetch("/api/prompts/preview", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  }).then(j);
 export const getVersions = (id) => fetch(`/api/books/${id}/versions`).then(j);
 export const restoreVersion = (id, file) =>
   fetch(`/api/books/${id}/restore`, {
@@ -120,7 +138,8 @@ export const printHref = (bookId, palette, excludeIds) =>
 
 /**
  * Stream a generation. Returns a controller with `.abort()`.
- * Callbacks: onStart(mode), onDelta(text), onDone(fullText), onError(message),
+ * Callbacks: onStart(info) (the server's start payload: mode, provider, model),
+ * onDelta(text), onDone(fullText), onError(message),
  * onStatus(message) (an in-progress note, e.g. "Finding images…"), and
  * onRevise(fullText) — the server replacing the accumulated text wholesale
  * (image-search placeholders resolved into real Markdown, or dropped) after
@@ -187,11 +206,11 @@ export function streamGenerate(payload, { url = "/api/ai/generate", onStart, onD
       let data = {};
       try { data = JSON.parse(dataLines.join("\n")); } catch { return; }
 
-      if (event === "start") onStart?.(data.mode);
+      if (event === "start") onStart?.(data);
       else if (event === "delta") { full += data.text || ""; onDelta?.(data.text || "", full); }
       else if (event === "status") onStatus?.(data.message || "");
       else if (event === "revise") { full = data.text ?? full; onRevise?.(full); }
-      else if (event === "done") onDone?.(full);
+      else if (event === "done") onDone?.(full, data);
       else if (event === "error") onError?.(data.message || "generation failed");
     }
   })();

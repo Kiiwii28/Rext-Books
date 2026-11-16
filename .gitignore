@@ -1,5 +1,6 @@
 .env
 local_settings.json
+prompts.local.json
 .venv/
 dist-portable/
 build-assets/

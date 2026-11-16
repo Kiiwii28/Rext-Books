@@ -8,6 +8,7 @@ import { mountExport } from "./export-panel.js";
 import { mountSpark, updateSpark } from "./spark-panel.js";
 import { mountPaneResizer } from "./resize.js";
 import { mountSettings, openIfNoKey } from "./settings-panel.js";
+import { mountPromptsPanel } from "./prompts-panel.js";
 import { mountTour } from "./tour.js";
 import {
   mountBookPicker, setBooks as setPickerBooks, setValue as setPickerValue,
@@ -132,6 +133,12 @@ const settingsEls = {
   backdrop: $("settings-modal"),
   closeBtn: $("settings-close"),
   status: $("settings-status"),
+  providerSelect: $("settings-provider"),
+  modelInput: $("settings-model-input"),
+  modelOptions: $("settings-model-options"),
+  modelNote: $("settings-model-note"),
+  keyLabel: $("settings-key-label"),
+  keyDest: $("settings-key-dest"),
   keyInput: $("settings-key-input"),
   toggleBtn: $("settings-key-toggle"),
   authorInput: $("settings-author-input"),
@@ -150,12 +157,29 @@ const settingsEls = {
   removeBtn: $("settings-remove"),
 };
 
+const promptsEls = {
+  panel: $("prompts-panel"),
+  group: $("prompts-group"),
+  filter: $("prompts-filter"),
+  list: $("prompts-list"),
+  status: $("prompts-status"),
+  saveBtn: $("prompts-save"),
+  resetAll: $("prompts-reset-all"),
+  previewMode: $("preview-mode"),
+  previewTone: $("preview-tone"),
+  previewDepth: $("preview-depth"),
+  previewLength: $("preview-length"),
+  previewRun: $("preview-run"),
+  previewOut: $("preview-out"),
+};
+
 mountTree(els.tree, { onSelect: (id) => store.select(id) });
 mountDock(dockEls);
 mountExport(exportEls);
 mountSpark(sparkEls);
 mountPaneResizer();
 mountSettings(settingsEls);
+mountPromptsPanel(promptsEls);
 mountTour($("btn-tutorial"));
 
 els.tree.addEventListener("click", (e) => {

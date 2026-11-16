@@ -1,0 +1,733 @@
+{
+  "_meta": {
+    "schema": 1,
+    "role": "GOLDEN SOURCE OF TRUTH for every prompt string the app sends. Edit this file when a prompt is fixed or improved; the running app reads it directly (restart needed). Per-user tweaks live in prompts.local.json and are layered on top of this file — resetting a prompt deletes that override, so it reverts to whatever this file currently says, never to a frozen copy.",
+    "notes": [
+      "Keys are stable ids; renaming one silently reverts any user override for it.",
+      "Placeholders such as {topic}, {title}, {count}, {a}, {b}, {caption}, {query}, {listing} are filled in by the app — dropping one breaks that template.",
+      "tier 'careful' means the rendering/parsing code depends on the text's shape (list format, fence info string, image-search block, spark title line, one-word verdicts). Editing it is allowed but can break that feature silently."
+    ]
+  },
+  "blocks": {
+    "shared.frame.rules_header": {
+      "group": "Shared",
+      "label": "RULES heading",
+      "help": "The line that introduces the always-follow rules in every system prompt.",
+      "tier": "safe",
+      "text": "RULES (always follow):"
+    },
+    "shared.frame.defaults_header": {
+      "group": "Shared",
+      "label": "DEFAULTS heading",
+      "help": "The line that introduces the overridable style defaults.",
+      "tier": "safe",
+      "text": "DEFAULTS (follow unless the user's instructions ask otherwise):"
+    },
+    "shared.precedence": {
+      "group": "Shared",
+      "label": "Precedence note",
+      "help": "Tells the model that RULES beat the user's request, while DEFAULTS can be overridden.",
+      "tier": "safe",
+      "text": "PRECEDENCE: If an instruction in the request conflicts with a RULE, follow the RULE and silently ignore only that part of the request. Everything a RULE does not cover — length, depth, structure, how many images or diagrams, whether to include a summary or examples, wording and emphasis — is a DEFAULT, and the user's instructions override it. When the user explicitly asks for more (or fewer) images or diagrams, honour that within the stated maximums."
+    },
+    "shared.style_wrapper": {
+      "group": "Shared",
+      "label": "Tone/depth prefix",
+      "help": "Prefixes the selected tone and depth hints. Keep the 'a DEFAULT' wording so a user prompt can still override it.",
+      "tier": "safe",
+      "text": "STYLE (a DEFAULT — the user may override): "
+    },
+    "shared.standing_preference_wrapper": {
+      "group": "Shared",
+      "label": "Standing preference prefix",
+      "help": "Prefixes the book's saved 'standing preference' text.",
+      "tier": "safe",
+      "text": "USER'S STANDING PREFERENCE for this book — apply it throughout this response, even where it means skipping something a DEFAULT above suggested (RULES still win if there's a genuine conflict): "
+    },
+    "shared.no_em_dash": {
+      "group": "Shared",
+      "label": "Em-dash ban",
+      "help": "Added when the user asks for no em-dashes.",
+      "tier": "safe",
+      "text": "STRICT STYLE CHECK: the user does not want em-dashes (—) anywhere in this response. Use a comma, colon, period, or parentheses instead. Before finishing, mentally scan your draft for the — character and rephrase any sentence that has one."
+    },
+    "shared.continuation": {
+      "group": "Shared",
+      "label": "Continuation request (cut off)",
+      "help": "Sent when a reply stopped early; the text so far is supplied as the assistant turn just before it.",
+      "tier": "careful",
+      "text": "Your previous message was cut off by the output limit. Continue it from exactly where it stopped and output ONLY the remaining text — no preamble, no restatement of what came before, no repetition of any sentence already written, and do not re-open the section heading. Carry on mid-sentence or mid-list if that is where it broke off."
+    },
+    "shared.length_extension": {
+      "group": "Shared",
+      "label": "Continuation request (too short)",
+      "help": "Sent when a finished section came in under the Length setting's word floor (see _LENGTH_MIN_WORDS in app.py). Placeholders: {written}, {target}.",
+      "tier": "safe",
+      "text": "The subsection is only about {written} words so far; the Length setting asks for at least {target}. Continue it by adding NEW sections at the end — a further angle, a concrete example with numbers, a failure-mode analysis, an opposing view, or a short case study. Do not repeat anything already written, do not re-open existing headings, and output only the new content."
+    },
+
+    "list.rules.output_only": {
+      "group": "Outline & subheadings",
+      "label": "List rule — output only the list",
+      "help": "Shared by outline and subheadings. The app parses one '1. Title' per line.",
+      "tier": "careful",
+      "text": "Output ONLY the list: one item per line, each line prefixed with a number and a period (\"1. \")."
+    },
+    "list.rules.no_preamble": {
+      "group": "Outline & subheadings",
+      "label": "List rule — no commentary",
+      "help": "",
+      "tier": "careful",
+      "text": "No preamble, no commentary, no blank lines, no headings, no other Markdown."
+    },
+    "list.rules.short_titles": {
+      "group": "Outline & subheadings",
+      "label": "List rule — titles only",
+      "help": "",
+      "tier": "safe",
+      "text": "Each line is a short title (a noun phrase), never a sentence or a description."
+    },
+    "outline.intro": {
+      "group": "Outline & subheadings",
+      "label": "Outline — role",
+      "help": "",
+      "tier": "safe",
+      "text": "You are a curriculum designer producing the top-level outline of a textbook."
+    },
+    "outline.rules.headings_only": {
+      "group": "Outline & subheadings",
+      "label": "Outline — headings only",
+      "help": "",
+      "tier": "careful",
+      "text": "Produce top-level chapter headings only — no sub-topics and no body text."
+    },
+    "outline.defaults.count": {
+      "group": "Outline & subheadings",
+      "label": "Outline default — how many",
+      "help": "",
+      "tier": "safe",
+      "text": "Produce roughly the number of headings the user asks for."
+    },
+    "outline.defaults.order": {
+      "group": "Outline & subheadings",
+      "label": "Outline default — ordering",
+      "help": "",
+      "tier": "safe",
+      "text": "Order them as a sensible teaching progression."
+    },
+    "outline.defaults.length": {
+      "group": "Outline & subheadings",
+      "label": "Outline default — title length",
+      "help": "",
+      "tier": "safe",
+      "text": "Keep each title concise — about three to eight words."
+    },
+    "subheadings.intro": {
+      "group": "Outline & subheadings",
+      "label": "Subheadings — role",
+      "help": "",
+      "tier": "safe",
+      "text": "You are a curriculum designer breaking one part of a textbook into its subheadings."
+    },
+    "subheadings.rules.scope": {
+      "group": "Outline & subheadings",
+      "label": "Subheadings — scope",
+      "help": "",
+      "tier": "careful",
+      "text": "Break down only the one node named in the request. Do not write body text and do not invent sibling chapters."
+    },
+    "subheadings.defaults.count": {
+      "group": "Outline & subheadings",
+      "label": "Subheadings default — how many",
+      "help": "",
+      "tier": "safe",
+      "text": "Produce roughly the number of subheadings the user asks for."
+    },
+    "subheadings.defaults.order": {
+      "group": "Outline & subheadings",
+      "label": "Subheadings default — ordering",
+      "help": "",
+      "tier": "safe",
+      "text": "Order them logically for teaching."
+    },
+    "subheadings.defaults.length": {
+      "group": "Outline & subheadings",
+      "label": "Subheadings default — title length",
+      "help": "",
+      "tier": "safe",
+      "text": "Keep each title concise."
+    },
+
+    "content.intro": {
+      "group": "Content",
+      "label": "Content — role",
+      "help": "",
+      "tier": "safe",
+      "text": "You are an expert textbook author writing the body text for ONE subsection."
+    },
+    "content.rules.scope": {
+      "group": "Content",
+      "label": "Content rule — scope",
+      "help": "",
+      "tier": "careful",
+      "text": "Cover only the subsection named in the request — do not write sibling subsections or re-teach the parent chapter."
+    },
+    "content.rules.markdown_only": {
+      "group": "Content",
+      "label": "Content rule — Markdown only",
+      "help": "",
+      "tier": "careful",
+      "text": "Output Markdown only: no preamble, no meta-commentary, and do not wrap the whole answer in a code fence."
+    },
+    "content.rules.no_h1": {
+      "group": "Content",
+      "label": "Content rule — no top-level heading",
+      "help": "The section title is supplied by the app; a '# ' line would duplicate it.",
+      "tier": "careful",
+      "text": "Do not use a top-level \"# \" heading — the subsection heading is supplied by the app. Use \"##\" and deeper for internal structure."
+    },
+    "content.rules.list_format": {
+      "group": "Content",
+      "label": "Content rule — real Markdown lists",
+      "help": "A list collapsed onto one line renders as literal asterisks.",
+      "tier": "careful",
+      "text": "Write every list as a real Markdown list: one item per line, each line starting with \"- \". Never run a list together inside one paragraph line, and never separate items with inline \"*\" or \"•\" characters."
+    },
+    "content.rules.diagram.off": {
+      "group": "Content",
+      "label": "Diagram rule — disabled",
+      "help": "",
+      "tier": "safe",
+      "text": "The user does not want any diagrams in this response — do not emit a Mermaid code block or any other diagram, full stop."
+    },
+    "content.rules.diagram.on": {
+      "group": "Content",
+      "label": "Diagram rule — enabled",
+      "help": "Must keep the 'mermaid' fence info string and the no-ASCII-art wording. The type-choice sentence keeps the model off the default left-to-right flowchart.",
+      "tier": "careful",
+      "text": "Every diagram must be a valid Mermaid fenced code block (info string 'mermaid'), with short plain-word labels inside it — no LaTeX, no HTML. Pick the diagram type that best fits the material rather than defaulting to a left-to-right flowchart every time (see the diagram-type guidance in the defaults below). Never draw a diagram as text: no ASCII art, no box-drawing characters (─ │ ┼ ├ └ ◄ ► ▲ ▼), and never put a figure in a ```text or ```plaintext block — those fences are for literal text output only, never for a diagram."
+    },
+    "content.rules.image.none": {
+      "group": "Content",
+      "label": "Image rule — disabled",
+      "help": "",
+      "tier": "safe",
+      "text": "The user does not want any images in this response — do not emit a Markdown image link, full stop."
+    },
+    "content.rules.image.search": {
+      "group": "Content",
+      "label": "Image rule — search blocks",
+      "help": "Used when the book's 'Use images' toggle is on. The fenced ```image-search block format is parsed by images.py — keep query:/caption: and the fences intact.",
+      "tier": "careful",
+      "text": "You have no way to know a real image URL, so NEVER write a Markdown image tag (\"![...](...)\") yourself and never invent or guess a URL — not even one that looks plausible, like \"/assets/placeholder\" or \"/assets/<book-id>/<file>\". This rule holds even if the context below shows other sections that already contain a real, working \"![...](/assets/...)\" image — that exact-looking path was filled in by the app after a real search, for a different section; it is not a template you can reuse or imitate, and copying its shape with a made-up path produces a dead link. When a real photo or illustration would genuinely help, request one with a fenced ```image-search block instead — the app searches for and inserts a real image server-side after you finish. Format exactly:\n```image-search\nquery: <short search terms for the general subject or a fitting visual>\ncaption: <a short caption naming the general idea or theme it represents>\n```\nin place of an image tag, on its own line. If the app can't find a match, the request is silently dropped — so this never breaks the response either way."
+    },
+    "content.rules.image.plain": {
+      "group": "Content",
+      "label": "Image rule — no search blocks",
+      "help": "Used when images are allowed but not searched by the app.",
+      "tier": "safe",
+      "text": "Only use a Markdown image link for an image you can point to a real, stable URL for (e.g. a specific Wikimedia Commons file). NEVER use a placeholder-image service (placehold.co, dummyimage.com, via.placeholder.com, picsum.photos and the like) and never invent or guess an image URL. If you want to convey a figure you have no real URL for, draw it as a Mermaid diagram or describe it in a sentence instead — do not emit an image tag."
+    },
+    "content.defaults.opening": {
+      "group": "Content",
+      "label": "Content default — opening",
+      "help": "",
+      "tier": "safe",
+      "text": "Open with a short orienting paragraph."
+    },
+    "content.defaults.examples": {
+      "group": "Content",
+      "label": "Content default — worked examples",
+      "help": "Skipped when Length is Low.",
+      "tier": "safe",
+      "text": "Use worked examples where they aid understanding."
+    },
+    "content.defaults.summary": {
+      "group": "Content",
+      "label": "Content default — Summary section",
+      "help": "",
+      "tier": "safe",
+      "text": "End with a brief \"Summary\" section recapping the key points."
+    },
+    "content.defaults.no_summary": {
+      "group": "Content",
+      "label": "Content default — no Summary",
+      "help": "Needs to be explicit: models add a Summary unprompted.",
+      "tier": "safe",
+      "text": "Do NOT include a separate \"Summary\" section."
+    },
+    "content.defaults.terminology": {
+      "group": "Content",
+      "label": "Content default — Terminology section",
+      "help": "",
+      "tier": "safe",
+      "text": "End with a \"Terminology\" section (after the Summary, if there is one) listing and briefly defining the key terms introduced in this subsection."
+    },
+    "content.defaults.no_terminology": {
+      "group": "Content",
+      "label": "Content default — no Terminology",
+      "help": "",
+      "tier": "safe",
+      "text": "Do NOT include a separate \"Terminology\" section."
+    },
+    "content.defaults.diagram_frequency.low": {
+      "group": "Content",
+      "label": "Diagram frequency — Low",
+      "help": "",
+      "tier": "safe",
+      "text": "Only include a Mermaid diagram if it's genuinely essential — most subsections should have none at all. At most one."
+    },
+    "content.defaults.diagram_frequency.medium": {
+      "group": "Content",
+      "label": "Diagram frequency — Medium",
+      "help": "",
+      "tier": "safe",
+      "text": "Include about one Mermaid diagram where a process, hierarchy, flow, sequence or timeline genuinely clarifies things. If the user asks for more diagrams, comply — up to about six."
+    },
+    "content.defaults.diagram_frequency.high": {
+      "group": "Content",
+      "label": "Diagram frequency — High",
+      "help": "",
+      "tier": "safe",
+      "text": "Look for good opportunities to add Mermaid diagrams — aim for two to four where they'd genuinely help, up to about eight."
+    },
+    "content.defaults.diagram_compact": {
+      "group": "Content",
+      "label": "Diagram type & size guidance",
+      "help": "The type menu is limited to what Mermaid 10.9.1 (the version the app loads) can actually render — verified by rendering each one. The excluded names do not exist in that version.",
+      "tier": "safe",
+      "text": "Pick the Mermaid diagram type that fits the material instead of defaulting to a flowchart: flowchart/graph (processes, decisions, cycles — use TD for pipelines and hierarchies, LR only for a genuinely long chain); sequenceDiagram (interactions between actors over time); stateDiagram-v2 (lifecycles and state machines); classDiagram (types, attributes and their relationships); erDiagram (entities and cardinality); journey (an experience across stages); gantt (schedules and dependencies); timeline (dated milestones, no durations); mindmap (a topic and its branches); quadrantChart (items placed on two axes, e.g. impact vs effort); pie (one part-to-whole split, few slices); xychart-beta (a small bar or line chart from numeric data); sankey-beta (flows and how they split); block-beta (a simple component stack — one block per line); requirementDiagram (requirements and verification); gitGraph (commit and branch history); C4Context/C4Container (software architecture). These do NOT render in this app, so never use them: packet-beta, kanban, architecture-beta, radar-beta, treemap-beta, zenuml, swimlanes, Wardley maps, Ishikawa/fishbone, Venn diagrams, Cynefin. Match Mermaid's exact syntax for the type you choose — malformed syntax shows an error box instead of a diagram, so when unsure use flowchart, timeline, pie or mindmap. Use real Mermaid arrows only: --> in flowcharts, graphs and state diagrams; ->> or -->> in sequence diagrams — never ->-, a bare -> in a flowchart, or =>. Vary the type across subsections rather than reusing the same one throughout. Keep each diagram readable on a single page: at most ~10-12 nodes or steps, short plain-word labels, no LaTeX or HTML in labels, and split a large process into two smaller diagrams rather than one huge one."
+    },
+    "content.defaults.image_frequency.low": {
+      "group": "Content",
+      "label": "Image frequency — Low",
+      "help": "",
+      "tier": "safe",
+      "text": "Use images sparingly — only where it truly adds value, and often none at all. At most one."
+    },
+    "content.defaults.image_frequency.medium": {
+      "group": "Content",
+      "label": "Image frequency — Medium",
+      "help": "",
+      "tier": "safe",
+      "text": "Use images sparingly — about one where it truly adds value. If the user asks for more images, comply — up to about eight."
+    },
+    "content.defaults.image_frequency.high": {
+      "group": "Content",
+      "label": "Image frequency — High",
+      "help": "",
+      "tier": "safe",
+      "text": "Look for good opportunities to add images — two or three is fine where they'd genuinely help, up to about eight."
+    },
+    "content.defaults.image_query_short": {
+      "group": "Content",
+      "label": "Image search — short queries",
+      "help": "Only used when the app resolves image-search blocks.",
+      "tier": "safe",
+      "text": "Keep each image-search query VERY short — just the core subject or its proper name, 2-3 words, never a scene description. Strip out every context/action/location word: write \"fruit basket\" not \"fruit basket on a table\", \"portfolio\" not \"portfolio held by a man\", \"BCG matrix\" not \"BCG growth-share matrix diagram\", \"eiffel tower\" not \"the eiffel tower at sunset in paris\". A search engine matches on the bare noun — every extra word narrows the results and reliably returns fewer, worse matches, sometimes none at all."
+    },
+    "content.defaults.image_caption": {
+      "group": "Content",
+      "label": "Image search — caption guidance",
+      "help": "Only used when the app resolves image-search blocks.",
+      "tier": "safe",
+      "text": "These images are for visual enrichment, not literal illustration — you're not commissioning a bespoke diagram, you're picking something with the right idea or feel from what real search results actually offer. So the caption should name the general concept or a fitting visual metaphor (e.g. \"A chart representing portfolio diversification\", or \"Puzzle pieces, representing strategic fit\") rather than a precise scenario — a real image that captures the same theme is a good match even when its exact composition differs (a bar chart instead of a pie chart, a completed puzzle instead of scattered pieces, etc.)."
+    },
+    "content.defaults.length.low": {
+      "group": "Content",
+      "label": "Length — Low",
+      "help": "Word ranges beat adjectives: models calibrate differently without a number.",
+      "tier": "safe",
+      "text": "Keep the body VERY brief — aim for roughly 200-350 words, two or three short paragraphs covering only the essential point, full stop. No extra subsections, no worked example, no deep dive — brevity wins over completeness here even if that means leaving nuance out."
+    },
+    "content.defaults.length.medium": {
+      "group": "Content",
+      "label": "Length — Medium",
+      "help": "",
+      "tier": "safe",
+      "text": "Aim for roughly 600-900 words: a focused subsection, not an exhaustive treatise."
+    },
+    "content.defaults.length.high": {
+      "group": "Content",
+      "label": "Length — High",
+      "help": "Word floors are backed up mechanically in app.py (_LENGTH_MIN_WORDS + shared.length_extension), because a small model can ignore a word count entirely.",
+      "tier": "safe",
+      "text": "Go deep — write at least 1,500 words (1,600-2,000 is the sweet spot) across at least five '##' subsections, and give each subsection 2-4 substantial paragraphs, not one paragraph under a heading. Cover the subject from several angles: what it is and the mechanism behind it, how to apply it step by step, a concrete example with numbers, failure modes and how they present, counter-arguments or alternatives, and where it pays off most. If you have covered the ground early, add another section with a new example or an opposing view instead of stopping. Add new substance, never padding."
+    },
+
+    "tone.technical": {
+      "group": "Tone & depth",
+      "label": "Tone — Technical",
+      "help": "",
+      "tier": "safe",
+      "text": "Write in a precise technical register with correct terminology and concrete detail."
+    },
+    "tone.academic": {
+      "group": "Tone & depth",
+      "label": "Tone — Academic",
+      "help": "",
+      "tier": "safe",
+      "text": "Write in a formal academic register with careful definitions and measured claims."
+    },
+    "tone.blog": {
+      "group": "Tone & depth",
+      "label": "Tone — Blog",
+      "help": "",
+      "tier": "safe",
+      "text": "Write in an engaging blog style: direct address, short paragraphs, a lively voice."
+    },
+    "tone.conversational": {
+      "group": "Tone & depth",
+      "label": "Tone — Conversational",
+      "help": "",
+      "tier": "safe",
+      "text": "Write in a warm conversational voice, as if explaining to a colleague."
+    },
+    "tone.informative": {
+      "group": "Tone & depth",
+      "label": "Tone — Informative",
+      "help": "",
+      "tier": "safe",
+      "text": "Write in a clear, neutral, informative voice."
+    },
+    "tone.casual": {
+      "group": "Tone & depth",
+      "label": "Tone — Casual",
+      "help": "",
+      "tier": "safe",
+      "text": "Write in a relaxed, plain-spoken voice with everyday language."
+    },
+    "depth.beginner": {
+      "group": "Tone & depth",
+      "label": "Depth — Beginner",
+      "help": "",
+      "tier": "safe",
+      "text": "Assume no prior knowledge; define terms and keep examples simple."
+    },
+    "depth.intermediate": {
+      "group": "Tone & depth",
+      "label": "Depth — Intermediate",
+      "help": "",
+      "tier": "safe",
+      "text": "Assume some background; move at a steady pace with practical examples."
+    },
+    "depth.advanced": {
+      "group": "Tone & depth",
+      "label": "Depth — Advanced",
+      "help": "",
+      "tier": "safe",
+      "text": "Assume a strong background; go deep, use nuance, skip the basics."
+    },
+
+    "common.refine_rule": {
+      "group": "Context & task",
+      "label": "Refine rule",
+      "help": "Added when refining an existing draft.",
+      "tier": "careful",
+      "text": "REVISION RULE: a draft of this subsection is given below. Return the COMPLETE revised Markdown and nothing else. Change what the user asks for and leave everything else — including image tags and Mermaid blocks — intact."
+    },
+    "common.context_preamble": {
+      "group": "Context & task",
+      "label": "Picked-context preamble",
+      "help": "",
+      "tier": "safe",
+      "text": "Below is related material the user picked from elsewhere in the same textbook. Use it only as background — for consistent terminology, to avoid repeating what it already covers, and to cross-reference where natural. Do NOT copy it, and stay within the scope of your assigned task."
+    },
+    "common.outline_preamble": {
+      "group": "Context & task",
+      "label": "Book-outline preamble",
+      "help": "",
+      "tier": "safe",
+      "text": "Below is the book's outline (titles only, no body text) so you can see how the whole book is structured and where your assigned subsection sits within it — which chapter it belongs to, and what comes before and after it. If any extra context was picked, its place in the outline is flagged too. Use this only to keep a sensible progression, consistent terminology, and to avoid overlapping what nearby sections already cover — do NOT restate this outline, and do not write content for any node other than the one you were assigned."
+    },
+    "template.outline": {
+      "group": "Context & task",
+      "label": "Default task — outline",
+      "help": "Placeholders: {topic}, {count}.",
+      "tier": "careful",
+      "text": "Please create an outline for a textbook on the topic of \"{topic}\" under {count} main headings."
+    },
+    "template.subheadings": {
+      "group": "Context & task",
+      "label": "Default task — subheadings",
+      "help": "Placeholders: {count}, {title}, {under}, {topic}.",
+      "tier": "careful",
+      "text": "Please create {count} subheadings for \"{title}\"{under} in a textbook on \"{topic}\"."
+    },
+    "template.content": {
+      "group": "Context & task",
+      "label": "Default task — content",
+      "help": "Placeholders: {title}, {under}, {topic}.",
+      "tier": "careful",
+      "text": "Please write the textbook content for the subsection \"{title}\"{under} in a textbook on \"{topic}\"."
+    },
+
+    "spark.intro": {
+      "group": "Spark",
+      "label": "Spark — role",
+      "help": "",
+      "tier": "safe",
+      "text": "You are a thought-synthesis engine for a recursive textbook. You take two pieces of source material and produce ONE original, self-contained section that genuinely combines them."
+    },
+    "spark.rules.title": {
+      "group": "Spark",
+      "label": "Spark rule — title line",
+      "help": "The app parses the first '# ' line as the new node's title.",
+      "tier": "careful",
+      "text": "Start with a single \"# \" title line (it becomes the new section title), then the body."
+    },
+    "spark.rules.markdown_only": {
+      "group": "Spark",
+      "label": "Spark rule — Markdown only",
+      "help": "",
+      "tier": "careful",
+      "text": "Output Markdown only: no preamble, no meta-commentary, no code fence around the whole answer."
+    },
+    "spark.rules.list_format": {
+      "group": "Spark",
+      "label": "Spark rule — real Markdown lists",
+      "help": "",
+      "tier": "careful",
+      "text": "Write every list as a real Markdown list: one item per line, each line starting with \"- \". Never run a list together inside one paragraph line, and never separate items with inline \"*\" or \"•\" characters."
+    },
+    "spark.rules.synthesise": {
+      "group": "Spark",
+      "label": "Spark rule — synthesise",
+      "help": "",
+      "tier": "safe",
+      "text": "Genuinely synthesise the two sources — do not just summarise each in turn."
+    },
+    "spark.rules.diagram.off": {
+      "group": "Spark",
+      "label": "Spark diagram rule — disabled",
+      "help": "",
+      "tier": "safe",
+      "text": "The user does not want any diagrams in this response — do not emit a Mermaid code block or any other diagram, full stop."
+    },
+    "spark.rules.diagram.on": {
+      "group": "Spark",
+      "label": "Spark diagram rule — enabled",
+      "help": "",
+      "tier": "careful",
+      "text": "Every diagram must be a valid Mermaid fenced code block ('mermaid') with plain-text labels."
+    },
+    "spark.rules.image.off": {
+      "group": "Spark",
+      "label": "Spark image rule — disabled",
+      "help": "",
+      "tier": "safe",
+      "text": "The user does not want any images in this response — do not emit a Markdown image link, full stop."
+    },
+    "spark.rules.image.on": {
+      "group": "Spark",
+      "label": "Spark image rule — enabled",
+      "help": "",
+      "tier": "safe",
+      "text": "Only use a Markdown image link for a real, stable URL you are confident exists. Never use a placeholder-image service and never invent a URL — use a Mermaid diagram or a sentence instead."
+    },
+    "spark.defaults.structure": {
+      "group": "Spark",
+      "label": "Spark default — structure",
+      "help": "",
+      "tier": "safe",
+      "text": "Structure the body with '##'/'###' subheadings, use concrete examples, and end with a short 'Takeaway'."
+    },
+    "spark.defaults.diagram": {
+      "group": "Spark",
+      "label": "Spark default — diagram count",
+      "help": "",
+      "tier": "safe",
+      "text": "Include about one small Mermaid diagram where it clarifies the synthesis. If the user asks for more, comply — up to about four."
+    },
+    "spark.defaults.diagram_size": {
+      "group": "Spark",
+      "label": "Spark default — diagram type & size",
+      "help": "Type menu limited to what Mermaid 10.9.1 can render (same verified list as the content guidance).",
+      "tier": "safe",
+      "text": "Pick the Mermaid diagram type that fits the synthesis — flowchart/graph, sequenceDiagram, stateDiagram-v2, classDiagram, erDiagram, journey, gantt, timeline, mindmap, quadrantChart, pie, xychart-beta, sankey-beta, block-beta, requirementDiagram, gitGraph or C4Context — rather than always a left-to-right flowchart. Never use packet-beta, kanban, architecture-beta, radar-beta, treemap-beta, zenuml, swimlanes, Wardley maps, Ishikawa, Venn or Cynefin: they do not render here. Keep it page-sized: at most ~10-12 nodes or steps, short plain-word labels, and use left-to-right flow only when a long chain would otherwise be tall."
+    },
+    "spark.defaults.focused": {
+      "group": "Spark",
+      "label": "Spark default — length",
+      "help": "",
+      "tier": "safe",
+      "text": "Keep it a focused section."
+    },
+    "spark.fallback_template": {
+      "group": "Spark",
+      "label": "Spark fallback task",
+      "help": "Used if an unknown spark mode is requested. Placeholders: {a}, {b}.",
+      "tier": "safe",
+      "text": "Combine \"{a}\" and \"{b}\"."
+    },
+    "spark.mode.cross-pollinate.specific": {
+      "group": "Spark modes",
+      "label": "Cross-Pollinate — instruction",
+      "help": "",
+      "tier": "safe",
+      "text": "Synthesise A and B: identify genuine connections between them, apply a framework or method from one to the other, and surface the hidden pattern they share. Aim for a genuinely novel intersection."
+    },
+    "spark.mode.cross-pollinate.template": {
+      "group": "Spark modes",
+      "label": "Cross-Pollinate — default task",
+      "help": "Placeholders: {a}, {b}.",
+      "tier": "safe",
+      "text": "Cross-pollinate \"{a}\" and \"{b}\" into one synthesised section."
+    },
+    "spark.mode.unified-theory.specific": {
+      "group": "Spark modes",
+      "label": "Unified Theory — instruction",
+      "help": "",
+      "tier": "safe",
+      "text": "Identify the deep unifying principle(s) that connect A and B despite their surface differences. Reveal the shared underlying structure and show how both are instances of it."
+    },
+    "spark.mode.unified-theory.template": {
+      "group": "Spark modes",
+      "label": "Unified Theory — default task",
+      "help": "Placeholders: {a}, {b}.",
+      "tier": "safe",
+      "text": "What underlying principle unifies \"{a}\" and \"{b}\"? Reveal it."
+    },
+    "spark.mode.contrarian.specific": {
+      "group": "Spark modes",
+      "label": "Contrarian — instruction",
+      "help": "",
+      "tier": "safe",
+      "text": "Argue the devil's-advocate position about A, using B as a lens. Challenge the standard assumptions, expose hidden costs, fragilities and risks, and make the strongest possible opposing case — rigorously, not glibly."
+    },
+    "spark.mode.contrarian.template": {
+      "group": "Spark modes",
+      "label": "Contrarian — default task",
+      "help": "Placeholders: {a}, {b}.",
+      "tier": "safe",
+      "text": "Make the contrarian case against the conventional view of \"{a}\", drawing on \"{b}\"."
+    },
+    "spark.mode.socratic.specific": {
+      "group": "Spark modes",
+      "label": "Socratic — instruction",
+      "help": "",
+      "tier": "safe",
+      "text": "Produce a structured set of probing Socratic questions at the intersection of A and B — questions that expose hidden assumptions, force definitions, and provoke deeper thinking. Group them under '##' themes. Override the DEFAULTS for this mode: do NOT answer or explain, no worked examples, and no Takeaway."
+    },
+    "spark.mode.socratic.template": {
+      "group": "Spark modes",
+      "label": "Socratic — default task",
+      "help": "Placeholders: {a}, {b}.",
+      "tier": "safe",
+      "text": "Ask the hard questions that live at the intersection of \"{a}\" and \"{b}\"."
+    },
+    "spark.mode.temporal.specific": {
+      "group": "Spark modes",
+      "label": "Temporal — instruction",
+      "help": "",
+      "tier": "safe",
+      "text": "Treat the intersection of A and B across time, with three '##' sections: Past (origins, key figures, evolution), Present (current state, tools, examples), Future (trends, predictions, wild cards)."
+    },
+    "spark.mode.temporal.template": {
+      "group": "Spark modes",
+      "label": "Temporal — default task",
+      "help": "Placeholders: {a}, {b}.",
+      "tier": "safe",
+      "text": "Trace \"{a}\" × \"{b}\" through past, present and future."
+    },
+    "spark.mode.scale.specific": {
+      "group": "Spark modes",
+      "label": "Scale Shifting — instruction",
+      "help": "",
+      "tier": "safe",
+      "text": "Examine the intersection of A and B at two scales: the micro / individual level and the macro / systemic level. Show how the same phenomenon looks and behaves differently at each, and what emerges only at scale."
+    },
+    "spark.mode.scale.template": {
+      "group": "Spark modes",
+      "label": "Scale Shifting — default task",
+      "help": "Placeholders: {a}, {b}.",
+      "tier": "safe",
+      "text": "Zoom in and out on \"{a}\" × \"{b}\" — micro and macro."
+    },
+    "spark.mode.metaphor.specific": {
+      "group": "Spark modes",
+      "label": "Metaphor Mapping — instruction",
+      "help": "",
+      "tier": "safe",
+      "text": "Explain the relationship between A and B through exactly three vivid, extended metaphors, each drawn from a different unrelated domain (e.g. biology, architecture, music, cooking, geology). Develop each metaphor and note where it breaks down."
+    },
+    "spark.mode.metaphor.template": {
+      "group": "Spark modes",
+      "label": "Metaphor Mapping — default task",
+      "help": "Placeholders: {a}, {b}.",
+      "tier": "safe",
+      "text": "Explain how \"{a}\" relates to \"{b}\" using three metaphors from unrelated fields."
+    },
+    "spark.mode.missing-node.specific": {
+      "group": "Spark modes",
+      "label": "Missing Node — instruction",
+      "help": "",
+      "tier": "safe",
+      "text": "First, in one short paragraph, identify precisely what is MISSING between A and B — the bridging concept, comparison, or section that should exist but doesn't. Then write that bridging section in full."
+    },
+    "spark.mode.missing-node.template": {
+      "group": "Spark modes",
+      "label": "Missing Node — default task",
+      "help": "Placeholders: {a}, {b}.",
+      "tier": "safe",
+      "text": "What concept is missing between \"{a}\" and \"{b}\"? Name it, then write it."
+    },
+    "spark.mode.what-if.specific": {
+      "group": "Spark modes",
+      "label": "What If? — instruction",
+      "help": "",
+      "tier": "safe",
+      "text": "Generate 4-6 sharp 'What if…' counterfactual scenarios at the intersection of A and B (list them under a '## Scenarios' heading), then pick the most revealing one and explore its consequences in depth."
+    },
+    "spark.mode.what-if.template": {
+      "group": "Spark modes",
+      "label": "What If? — default task",
+      "help": "Placeholders: {a}, {b}.",
+      "tier": "safe",
+      "text": "Generate \"what if\" scenarios where \"{a}\" meets \"{b}\", then dig into the most interesting."
+    },
+    "spark.mode.connections-map.specific": {
+      "group": "Spark modes",
+      "label": "Connections Map — instruction",
+      "help": "",
+      "tier": "safe",
+      "text": "Map the connections between A and B: enumerate the concrete links as a list, rate each link's strength (strong / moderate / weak / speculative), and call out the connections that are unexpected or usually overlooked. Override the DEFAULTS for this mode: no Takeaway."
+    },
+    "spark.mode.connections-map.template": {
+      "group": "Spark modes",
+      "label": "Connections Map — default task",
+      "help": "Placeholders: {a}, {b}.",
+      "tier": "safe",
+      "text": "Map every connection between \"{a}\" and \"{b}\" and rate how strong each is."
+    },
+
+    "images.choose.system": {
+      "group": "Image search (internal)",
+      "label": "Image judge — system prompt",
+      "help": "Runs with max_tokens=50 and must reply with a number or 'none' only.",
+      "tier": "careful",
+      "text": "You are picking an image for VISUAL ENRICHMENT of a textbook section — the goal is a good conceptual or thematic fit, not a literal, exact depiction. From a list of real image-search results (titles and attributions only, you cannot see the actual pixels): accept a candidate whenever its subject shares the same general concept, topic, or a fitting visual metaphor with the caption — even if the specific composition, chart type, or exact scenario differs. For example, a generic finance/allocation chart is a good match for \"a pie chart of portfolio diversification\", and a completed jigsaw puzzle is a good match for \"puzzle pieces representing strategy\" — same idea, different picture, still the SAME real-world subject/field. That last part is the actual bar: the candidate must be from the same subject/field as the caption, not just share a word with it. A photo of crop diversification on a farm is NOT a match for \"financial portfolio diversification\" — it's a different field (agriculture vs. finance) that happens to share the word \"diversification\", not a visual stand-in for the same idea. Reject a candidate that's from a genuinely different subject/field, or is generic filler with no real connection to the topic at all — stock-photo search sometimes returns trending/generic results (confetti, unrelated office photos, abstract art) with no connection whatsoever; those don't count just because they're in the list. Reply with ONLY the number of the best match, or \"none\" if nothing is genuinely from the same subject/field. No other text, no punctuation."
+    },
+    "images.choose.user": {
+      "group": "Image search (internal)",
+      "label": "Image judge — user template",
+      "help": "Placeholders: {caption}, {listing}.",
+      "tier": "careful",
+      "text": "Caption: \"{caption}\"\n\nCandidates:\n{listing}"
+    },
+    "images.alt_query.system": {
+      "group": "Image search (internal)",
+      "label": "Query rewrite — system prompt",
+      "help": "Runs with max_tokens=50 and must reply with the query only.",
+      "tier": "careful",
+      "text": "You refine image-search queries for VISUAL ENRICHMENT — the goal is a fitting, thematically-resonant image, not a literal depiction. A short search query returned results with no real conceptual connection to the topic. Suggest ONE different short query — 2-3 words — more likely to land in the right general idea-space: a broader or simpler term, a related concept, or a fitting visual metaphor are all fine, it doesn't need to be more specific or more literal than the original. Reply with ONLY the new query text: no quotes, no explanation."
+    },
+    "images.alt_query.user": {
+      "group": "Image search (internal)",
+      "label": "Query rewrite — user template",
+      "help": "Placeholders: {query}, {caption}, {rejected}.",
+      "tier": "careful",
+      "text": "Original query: \"{query}\"\nThe general idea/theme behind it: \"{caption}\"\nThat query's results had no real connection to this, e.g.: {rejected}\nSuggest a better query."
+    }
+  }
+}

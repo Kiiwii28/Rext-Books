@@ -2,6 +2,7 @@ Flask>=3.0
 Markdown>=3.5
 requests>=2.31
 python-dotenv>=1.0
+latex2mathml>=3.0 # Math: converts $…$ / $$…$$ LaTeX to MathML server-side (no CDN, no JS)
 Pillow>=10.0   # EPUB export: crops rasterized Mermaid diagrams out of a batched screenshot
 pypdf>=6.0     # PDF export: reads the generated PDF's outline, merges the running-header overlay
 reportlab>=5.0 # PDF export: draws the running-header text overlay

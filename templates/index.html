@@ -156,7 +156,7 @@
 
             <div id="ai-images-block" class="ai-images-block" hidden>
               <label class="ai-count-row" id="ai-images-row">
-                <span>🖼 Let DeepSeek search &amp; insert images <span class="hint">(via Wikimedia/Pexels)</span></span>
+                <span>🖼 Let the model search &amp; insert images <span class="hint">(via Wikimedia/Pexels)</span></span>
                 <input id="ai-use-images" type="checkbox">
               </label>
               <div id="ai-image-options" class="ai-image-options">
@@ -369,7 +369,26 @@
         <div id="settings-status" class="ai-status" hidden></div>
 
         <div class="field">
-          <span class="field-label">DeepSeek API key</span>
+          <span class="field-label">Provider</span>
+          <select id="settings-provider" autocomplete="off"></select>
+          <p class="export-note">
+            Where generation requests go. Each provider keeps its own model and
+            key, so switching back and forth never means re-entering anything —
+            and the switch applies immediately, with no restart.
+          </p>
+        </div>
+
+        <div class="field">
+          <span class="field-label">Model</span>
+          <input id="settings-model-input" type="text" list="settings-model-options"
+                 placeholder="Use the provider's default" autocomplete="off"
+                 spellcheck="false" />
+          <datalist id="settings-model-options"></datalist>
+          <p id="settings-model-note" class="export-note"></p>
+        </div>
+
+        <div class="field">
+          <span class="field-label"><span id="settings-key-label">API key</span></span>
           <div class="settings-key-row">
             <input id="settings-key-input" type="password" placeholder="sk-…"
                    autocomplete="off" spellcheck="false" />
@@ -377,7 +396,9 @@
           </div>
           <p class="export-note">
             Stored only on this machine, in a local file next to the app — never
-            committed, never shown to the model, never sent anywhere but DeepSeek.
+            committed, never shown to the model, never sent anywhere but
+            <span id="settings-key-dest">the selected provider</span>. Paste it
+            and press <b>Enter</b> (or test it) to save without using Save.
           </p>
           <div id="settings-inline" class="ai-status" hidden></div>
         </div>
@@ -429,7 +450,52 @@
           <p id="settings-pexels-usage" class="export-note" hidden></p>
         </div>
 
-        <p class="export-note">Model in use: <code id="settings-model"></code></p>
+        <details id="prompts-panel" class="prompts-panel">
+          <summary>Advanced — prompt text</summary>
+          <p class="export-note">
+            Every instruction the app sends to the model, loaded from
+            <code>prompts.defaults.json</code> (the golden source of truth) and layered
+            with your own edits saved in <code>prompts.local.json</code>. Reset removes
+            your edit for that block, so it goes back to whatever the golden file says
+            <i>now</i> — including later prompt fixes. Blocks marked ⚠ are parsed by the
+            app (list format, Mermaid fences, image-search blocks, the Spark title line,
+            the image judge's one-word verdict); editing those can silently break that
+            feature.
+          </p>
+          <div class="prompts-toolbar">
+            <select id="prompts-group" class="mini-select" aria-label="Prompt group"></select>
+            <input id="prompts-filter" type="search" placeholder="Filter prompts…"
+                   autocomplete="off" spellcheck="false" />
+            <div class="prompts-actions">
+              <button id="prompts-save" class="btn primary sm" type="button">Save prompts</button>
+              <button id="prompts-reset-all" class="btn ghost sm" type="button">Reset all</button>
+            </div>
+          </div>
+          <div id="prompts-status" class="ai-status" hidden></div>
+          <div id="prompts-list" class="prompts-list"></div>
+
+          <details class="prompts-preview">
+            <summary>Preview the assembled prompt</summary>
+            <div class="prompts-preview-controls">
+              <select id="preview-mode" class="mini-select">
+                <option value="content">Content</option>
+                <option value="outline">Outline</option>
+                <option value="subheadings">Subheadings</option>
+              </select>
+              <select id="preview-tone" class="mini-select"></select>
+              <select id="preview-depth" class="mini-select"></select>
+              <select id="preview-length" class="mini-select">
+                <option value="Low">Length: Low</option>
+                <option value="Medium">Length: Medium</option>
+                <option value="High">Length: High</option>
+              </select>
+              <button id="preview-run" class="btn ghost sm" type="button">Build</button>
+            </div>
+            <pre id="preview-out" class="prompts-preview-out"></pre>
+          </details>
+        </details>
+
+        <p class="export-note">In use: <code id="settings-model"></code></p>
       </div>
 
       <div class="modal-foot">

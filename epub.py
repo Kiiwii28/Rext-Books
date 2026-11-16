@@ -410,6 +410,9 @@ hr {{ border: 0; border-top: 1px solid {p['muted']}66; margin: 1.6em 0; }}
   display: block; margin: 1em 0; padding: .8em; text-align: center;
   border: 1px dashed {p['muted']}88; border-radius: 5px;
   background: {p['accent']}08; color: {p['muted']}; font-style: italic; }}
+.math-block {{ margin: 1em 0; text-align: center; overflow-x: auto; }}
+.math-inline {{ white-space: nowrap; }}
+.math-inline math, .math-block math {{ font-size: 1.05em; }}
 .cover {{ text-align: center; padding-top: 30%; }}
 .cover h1 {{ font-size: 2em; }}
 .cover .band {{ height: 3px; width: 40%; margin: 1em auto; background: {p['accent']}; }}

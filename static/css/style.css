@@ -792,6 +792,13 @@ body.is-resizing-y, body.is-resizing-y * { cursor: ns-resize !important; user-se
   background: color-mix(in srgb, var(--accent) 4%, transparent);
   color: var(--ink-faint);
 }
+
+/* ---------- math (LaTeX converted server-side to MathML) ---------- */
+.markdown-body .math-block {
+  margin: 1.15em 0; text-align: center; overflow-x: auto;
+}
+.markdown-body .math-inline { white-space: nowrap; }
+.markdown-body math { font-size: 1.06em; }
 .markdown-body .fig-placeholder .fig-icon {
   display: block; font-size: 20px; opacity: .5; margin-bottom: 6px;
 }
@@ -1229,16 +1236,87 @@ body.is-resizing-y, body.is-resizing-y * { cursor: ns-resize !important; user-se
 .export-note { margin: 0; font-size: 12px; color: var(--ink-soft); line-height: 1.5; }
 
 .settings-key-row { display: flex; gap: 6px; }
-#settings-key-input, #settings-author-input {
+#settings-key-input, #settings-author-input, #settings-model-input, #settings-provider {
   flex: 1; font: inherit; font-size: 13px; padding: 8px 10px;
   border: 1px solid var(--line-strong); border-radius: 7px;
   background: var(--glass-solid); color: var(--ink);
   width: 100%;
 }
 #settings-key-input { font-family: var(--mono); }
-#settings-key-input:focus, #settings-author-input:focus {
+#settings-model-input { font-family: var(--mono); }
+/* Native chevron needs room so it doesn't sit on the border. */
+#settings-provider { padding-right: 26px; cursor: pointer; }
+#settings-key-input:focus, #settings-author-input:focus,
+#settings-model-input:focus, #settings-provider:focus {
   outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 1px;
 }
+
+/* ---------- Settings → Advanced: prompt text editor ---------- */
+.prompts-panel { border-top: 1px solid var(--line); padding-top: 12px; }
+.prompts-panel > summary {
+  cursor: pointer; font-size: 12px; font-weight: 700;
+  letter-spacing: .04em; color: var(--ink-soft);
+}
+.prompts-panel[open] > summary { margin-bottom: 8px; }
+.prompts-toolbar {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0;
+}
+.prompts-toolbar .mini-select {
+  font: inherit; font-size: 12px; padding: 5px 8px; border-radius: 6px;
+  border: 1px solid var(--line-strong); background: var(--glass-solid); color: var(--ink);
+}
+.prompts-toolbar input[type="search"] {
+  flex: 1; min-width: 140px; font: inherit; font-size: 12px; padding: 6px 9px;
+  border: 1px solid var(--line-strong); border-radius: 6px;
+  background: var(--glass-solid); color: var(--ink);
+}
+.prompts-actions { display: flex; gap: 6px; margin-left: auto; }
+.prompts-list {
+  display: flex; flex-direction: column; gap: 12px;
+  max-height: 46vh; overflow-y: auto; padding-right: 4px;
+}
+.prompts-group-head {
+  margin: 6px 0 0; font-size: 10px; font-weight: 700; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--ink-faint);
+}
+.prompt-block {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
+  background: color-mix(in srgb, var(--ink) 3%, transparent);
+}
+.prompt-block-head { display: flex; align-items: center; gap: 8px; }
+.prompt-block-label { font-size: 12.5px; font-weight: 600; }
+.prompt-badge {
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+  padding: 1px 6px; border-radius: 999px; color: var(--accent-ink);
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.prompt-tier { font-size: 10.5px; color: var(--err); cursor: help; }
+.prompt-block-head .mini-link { margin-left: auto; }
+.prompt-block-head .mini-link:disabled { opacity: .4; cursor: default; }
+.prompt-text {
+  width: 100%; box-sizing: border-box; resize: vertical;
+  font-family: var(--mono); font-size: 12px; line-height: 1.5;
+  padding: 8px 10px; border-radius: 7px;
+  border: 1px solid var(--line-strong); background: var(--glass-solid); color: var(--ink);
+}
+.prompt-text:focus { outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); }
+.prompt-orig > summary { cursor: pointer; font-size: 11px; color: var(--ink-faint); }
+.prompt-orig pre {
+  margin: 6px 0 0; padding: 8px 10px; border-radius: 7px; overflow-x: auto;
+  font-family: var(--mono); font-size: 11.5px; line-height: 1.5;
+  background: color-mix(in srgb, var(--ink) 6%, transparent); color: var(--ink-soft);
+  white-space: pre-wrap;
+}
+.prompts-preview { border-top: 1px dashed var(--line-strong); padding-top: 10px; }
+.prompts-preview > summary { cursor: pointer; font-size: 12px; color: var(--ink-soft); }
+.prompts-preview-controls { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.prompts-preview-out {
+  margin: 0; max-height: 34vh; overflow: auto; padding: 10px 12px; border-radius: 8px;
+  font-family: var(--mono); font-size: 11.5px; line-height: 1.5; white-space: pre-wrap;
+  background: #14131a; color: #e7e5ef;
+}
+.prompts-preview-out:empty { display: none; }
 
 .export-content-toggle {
   display: flex; align-items: center; gap: 7px; width: 100%;

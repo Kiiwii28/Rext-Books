@@ -16,7 +16,8 @@ import uuid
 import requests
 
 import config
-import deepseek
+import llm
+import prompt_store
 import store
 
 def _log(msg: str) -> None:
@@ -265,7 +266,7 @@ def fetch_remote(url: str, *, retries: int = 1) -> bytes | None:
 
 
 # --------------------------------------------------------------------------- #
-#  DeepSeek-driven images: the model requests a fenced ```image-search block   #
+#  Model-driven images: the model requests a fenced ```image-search block      #
 #  (see prompts.py's use_images branch) instead of writing a Markdown image    #
 #  tag itself; resolved here, after generation, into a real inserted image.    #
 # --------------------------------------------------------------------------- #
@@ -276,7 +277,7 @@ MAX_RESOLVED_IMAGES = 8   # matches the "up to about eight" DEFAULT in prompts.p
 
 
 # --------------------------------------------------------------------------- #
-#  Per-book "already used" image tracking — DeepSeek doesn't remember what it  #
+#  Per-book "already used" image tracking — the model doesn't remember what it #
 #  picked for an earlier section, so left alone it can (and does) pick the     #
 #  exact same photo more than once in one book. A sidecar file, not a field   #
 #  on the book itself: the browser autosaves the FULL book JSON on its own    #
@@ -317,7 +318,7 @@ def _parse_placeholder(body: str) -> tuple[str, str]:
 
 
 def _choose_candidate(caption: str, candidates: list[dict]) -> int | None:
-    """A small, cheap, non-streaming DeepSeek call picks the best-matching
+    """A small, cheap, non-streaming model call picks the best-matching
     candidate by its title/attribution text (no vision model involved — this
     app never sees the actual pixels either). Returns None if nothing has a
     genuine conceptual connection; fails closed (returns None) on any error
@@ -350,47 +351,17 @@ def _choose_candidate(caption: str, candidates: list[dict]) -> int | None:
         for i, c in enumerate(candidates)
     )
     messages = [
-        {"role": "system", "content": (
-            "You are picking an image for VISUAL ENRICHMENT of a textbook "
-            "section — the goal is a good conceptual or thematic fit, not a "
-            "literal, exact depiction. From a list of real image-search results "
-            "(titles and attributions only, you cannot see the actual pixels): "
-            "accept a candidate whenever its subject shares the same general "
-            "concept, topic, or a fitting visual metaphor with the caption — "
-            "even if the specific composition, chart type, or exact scenario "
-            'differs. For example, a generic finance/allocation chart is a good '
-            'match for "a pie chart of portfolio diversification", and a '
-            'completed jigsaw puzzle is a good match for "puzzle pieces '
-            'representing strategy" — same idea, different picture, still the '
-            "SAME real-world subject/field. That last part is the actual bar: "
-            "the candidate must be from the same subject/field as the caption, "
-            "not just share a word with it. A photo of crop diversification on "
-            "a farm is NOT a match for \"financial portfolio diversification\" "
-            "— it's a different field (agriculture vs. finance) that happens to "
-            "share the word \"diversification\", not a visual stand-in for the "
-            "same idea. Reject a candidate that's from a genuinely different "
-            "subject/field, or is generic filler with no real connection to the "
-            "topic at all — stock-photo search sometimes returns trending/"
-            "generic results (confetti, unrelated office photos, abstract art) "
-            "with no connection whatsoever; those don't count just because "
-            'they\'re in the list. Reply with ONLY the number of the best '
-            'match, or "none" if nothing is genuinely from the same subject/'
-            "field. No other text, no punctuation."
-        )},
-        {"role": "user", "content": f'Caption: "{caption}"\n\nCandidates:\n{listing}'},
+        {"role": "system", "content": prompt_store.get("images.choose.system")},
+        {"role": "user", "content": prompt_store.get(
+            "images.choose.user", caption=caption, listing=listing)},
     ]
     try:
-        # This model spends an unpredictable — sometimes very large (500+
-        # tokens observed, no fixed ceiling found) — number of hidden
-        # "reasoning" tokens before any visible output, even for a trivial
-        # one-word answer, and they count against max_tokens together with
-        # the real reply. Raising max_tokens (300, then 2000) only reduced
-        # how often that silently produced an empty reply; it kept happening
-        # at 2000 too. reasoning_effort="none" skips that pass entirely —
-        # confirmed to still answer correctly on the exact prompts that were
-        # coming back empty, using a single output token instead of 500+.
-        reply = deepseek.chat(messages, temperature=0, max_tokens=50,
-                              reasoning_effort="none").strip().lower()
+        # utility=True is the "cheap internal call" switch: the provider's
+        # non-thinking model, or (DeepSeek) reasoning_effort="none" to skip
+        # its hidden reasoning pass. Without one of those a 50-token budget
+        # gets spent thinking and the reply comes back empty — see llm.py.
+        reply = llm.chat(messages, temperature=0, max_tokens=50,
+                         utility=True).strip().lower()
     except Exception as exc:
         _log(f"chooser call failed for {caption!r}: {exc!r}")
         return None
@@ -419,27 +390,13 @@ def _suggest_alternative_query(query: str, caption: str, rejected_titles: list[s
     different."""
     rejected = "; ".join(rejected_titles[:6]) if rejected_titles else "no results at all"
     messages = [
-        {"role": "system", "content": (
-            "You refine image-search queries for VISUAL ENRICHMENT — the goal is "
-            "a fitting, thematically-resonant image, not a literal depiction. A "
-            "short search query returned results with no real conceptual "
-            "connection to the topic. Suggest ONE different short query — 2-3 "
-            "words — more likely to land in the right general idea-space: a "
-            "broader or simpler term, a related concept, or a fitting visual "
-            "metaphor are all fine, it doesn't need to be more specific or more "
-            "literal than the original. Reply with ONLY the new query text: no "
-            "quotes, no explanation."
-        )},
-        {"role": "user", "content": (
-            f'Original query: "{query}"\n'
-            f'The general idea/theme behind it: "{caption}"\n'
-            f"That query's results had no real connection to this, e.g.: {rejected}\n"
-            "Suggest a better query."
-        )},
+        {"role": "system", "content": prompt_store.get("images.alt_query.system")},
+        {"role": "user", "content": prompt_store.get(
+            "images.alt_query.user", query=query, caption=caption, rejected=rejected)},
     ]
     try:
-        reply = deepseek.chat(messages, temperature=0.4, max_tokens=50,
-                              reasoning_effort="none").strip()
+        reply = llm.chat(messages, temperature=0.4, max_tokens=50,
+                         utility=True).strip()
     except Exception as exc:
         _log(f"alternative-query suggestion failed for {query!r}: {exc!r}")
         return None
@@ -479,7 +436,7 @@ def resolve_image_placeholders(text: str, book_id: str, *, source: str = "auto")
     so a flaky search/download/chooser call can't break the whole response.
 
     A photo already used elsewhere in this book is filtered out of the
-    candidate list before the chooser ever sees it — DeepSeek has no memory
+    candidate list before the chooser ever sees it — the model has no memory
     of what it picked for an earlier section, so left alone it happily reuses
     the same photo three times in one book (observed). See the "used image
     tracking" section above for why this is a sidecar file, not a book field.

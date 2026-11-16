@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import re
 
+import prompt_store
+
 MODES = ("outline", "subheadings", "content")
 
 # Best-effort detectors for a handful of common, concrete asks that would
@@ -38,75 +40,95 @@ _EM_DASH_RE = re.compile(r"em[\s-]?dash", re.I)
 TONES = ("Technical", "Academic", "Blog", "Conversational", "Informative", "Casual")
 DEPTHS = ("Beginner", "Intermediate", "Advanced")
 
-_TONE_HINT = {
-    "Technical": "Write in a precise technical register with correct terminology and concrete detail.",
-    "Academic": "Write in a formal academic register with careful definitions and measured claims.",
-    "Blog": "Write in an engaging blog style: direct address, short paragraphs, a lively voice.",
-    "Conversational": "Write in a warm conversational voice, as if explaining to a colleague.",
-    "Informative": "Write in a clear, neutral, informative voice.",
-    "Casual": "Write in a relaxed, plain-spoken voice with everyday language.",
+# Tone/depth hints are text, so they live in prompts.defaults.json (golden) and
+# can be overridden per user — these maps are only the id lookup.
+_TONE_KEYS = {
+    "Technical": "tone.technical",
+    "Academic": "tone.academic",
+    "Blog": "tone.blog",
+    "Conversational": "tone.conversational",
+    "Informative": "tone.informative",
+    "Casual": "tone.casual",
 }
-_DEPTH_HINT = {
-    "Beginner": "Assume no prior knowledge; define terms and keep examples simple.",
-    "Intermediate": "Assume some background; move at a steady pace with practical examples.",
-    "Advanced": "Assume a strong background; go deep, use nuance, skip the basics.",
+_DEPTH_KEYS = {
+    "Beginner": "depth.beginner",
+    "Intermediate": "depth.intermediate",
+    "Advanced": "depth.advanced",
 }
 
-# Always the final instruction in the system prompt. Also reused by sparks.py.
-OVERRIDE_NOTE = (
-    "PRECEDENCE: If an instruction in the request conflicts with a RULE, follow the "
-    "RULE and silently ignore only that part of the request. Everything a RULE does "
-    "not cover — length, depth, structure, how many images or diagrams, whether to "
-    "include a summary or examples, wording and emphasis — is a DEFAULT, and the "
-    "user's instructions override it. When the user explicitly asks for more (or "
-    "fewer) images or diagrams, honour that within the stated maximums."
-)
+
+def tone_hint(tone: str | None) -> str:
+    key = _TONE_KEYS.get(tone or "")
+    return prompt_store.get(key) if key else ""
+
+
+def depth_hint(depth: str | None) -> str:
+    key = _DEPTH_KEYS.get(depth or "")
+    return prompt_store.get(key) if key else ""
+
+
+def style_line(tone: str | None, depth: str | None) -> str:
+    """The full 'STYLE (a DEFAULT …): …' line, or '' when neither is set."""
+    hints = [h for h in (tone_hint(tone), depth_hint(depth)) if h]
+    if not hints:
+        return ""
+    return prompt_store.get("shared.style_wrapper") + " ".join(hints)
+
+
+def override_note() -> str:
+    """Always the final instruction in the system prompt. Also used by sparks.py."""
+    return prompt_store.get("shared.precedence")
+
+
+def continuation_prompt() -> str:
+    """Final user turn when a reply was cut off (see app.py)."""
+    return prompt_store.get("shared.continuation")
 
 
 def _frame(intro: str, *, rules: list[str], defaults: list[str]) -> str:
     return (
         intro.strip() + "\n\n"
-        + "RULES (always follow):\n"
+        + prompt_store.get("shared.frame.rules_header") + "\n"
         + "\n".join(f"- {r}" for r in rules) + "\n\n"
-        + "DEFAULTS (follow unless the user's instructions ask otherwise):\n"
+        + prompt_store.get("shared.frame.defaults_header") + "\n"
         + "\n".join(f"- {d}" for d in defaults)
     )
 
 
-_LIST_RULES = [
-    'Output ONLY the list: one item per line, each line prefixed with a number and a period ("1. ").',
-    "No preamble, no commentary, no blank lines, no headings, no other Markdown.",
-    "Each line is a short title (a noun phrase), never a sentence or a description.",
-]
+def _list_rules() -> list[str]:
+    return [prompt_store.get(k) for k in (
+        "list.rules.output_only", "list.rules.no_preamble", "list.rules.short_titles")]
 
-SYSTEM_PROMPTS = {
-    "outline": _frame(
-        "You are a curriculum designer producing the top-level outline of a textbook.",
-        rules=_LIST_RULES + [
-            "Produce top-level chapter headings only — no sub-topics and no body text.",
-        ],
-        defaults=[
-            "Produce roughly the number of headings the user asks for.",
-            "Order them as a sensible teaching progression.",
-            "Keep each title concise — about three to eight words.",
-        ],
-    ),
-    "subheadings": _frame(
-        "You are a curriculum designer breaking one part of a textbook into its subheadings.",
-        rules=_LIST_RULES + [
-            "Break down only the one node named in the request. Do not write body text "
-            "and do not invent sibling chapters.",
-        ],
-        defaults=[
-            "Produce roughly the number of subheadings the user asks for.",
-            "Order them logically for teaching.",
-            "Keep each title concise.",
-        ],
-    ),
-}
+
+def _list_system_prompt(mode: str) -> str:
+    """Outline / subheadings system prompt, built fresh so prompt edits apply
+    to the very next generation without a restart."""
+    rules = _list_rules()
+    if mode == "outline":
+        return _frame(
+            prompt_store.get("outline.intro"),
+            rules=rules + [prompt_store.get("outline.rules.headings_only")],
+            defaults=[prompt_store.get(k) for k in (
+                "outline.defaults.count", "outline.defaults.order", "outline.defaults.length")],
+        )
+    return _frame(
+        prompt_store.get("subheadings.intro"),
+        rules=rules + [prompt_store.get("subheadings.rules.scope")],
+        defaults=[prompt_store.get(k) for k in (
+            "subheadings.defaults.count", "subheadings.defaults.order",
+            "subheadings.defaults.length")],
+    )
 
 
 FREQUENCIES = ("Low", "Medium", "High")
+
+
+def _frequency_key(prefix: str, value: str) -> str:
+    """Block id for a Low/Medium/High setting, defaulting to Medium for an
+    unexpected value rather than raising deep inside prompt assembly."""
+    level = (value or "").strip().lower()
+    return f"{prefix}.{level if level in ('low', 'medium', 'high') else 'medium'}"
+
 
 def _content_system_prompt(*, no_diagrams: bool = False, no_images: bool = False,
                            use_images: bool = False, image_frequency: str = "Medium",
@@ -127,66 +149,26 @@ def _content_system_prompt(*, no_diagrams: bool = False, no_images: bool = False
     entirely when ``no_images`` is set — an explicit "don't use images" always
     wins over the book-level toggle."""
     use_images = use_images and not no_images
-    rules = [
-        "Cover only the subsection named in the request — do not write sibling "
-        "subsections or re-teach the parent chapter.",
-        "Output Markdown only: no preamble, no meta-commentary, and do not wrap the "
-        "whole answer in a code fence.",
-        'Do not use a top-level "# " heading — the subsection heading is supplied by '
-        'the app. Use "##" and deeper for internal structure.',
-    ]
-    rules.append(
-        "The user does not want any diagrams in this response — do not emit a "
-        "Mermaid code block or any other diagram, full stop."
-        if no_diagrams else
-        "Every diagram must be a valid Mermaid fenced code block (info string "
-        "'mermaid') with plain-text labels."
-    )
+    rules = [prompt_store.get(k) for k in (
+        "content.rules.scope", "content.rules.markdown_only",
+        "content.rules.no_h1", "content.rules.list_format")]
+    rules.append(prompt_store.get(
+        "content.rules.diagram.off" if no_diagrams else "content.rules.diagram.on"))
     if no_images:
-        rules.append(
-            "The user does not want any images in this response — do not emit a "
-            "Markdown image link, full stop."
-        )
+        rules.append(prompt_store.get("content.rules.image.none"))
     elif use_images:
-        rules.append(
-            "You have no way to know a real image URL, so NEVER write a Markdown "
-            'image tag ("![...](...)") yourself and never invent or guess a URL — '
-            "not even one that looks plausible, like \"/assets/placeholder\" or "
-            "\"/assets/<book-id>/<file>\". This rule holds even if the context "
-            "below shows other sections that already contain a real, working "
-            '"![...](/assets/...)" image — that exact-looking path was filled in '
-            "by the app after a real search, for a different section; it is not a "
-            "template you can reuse or imitate, and copying its shape with a made-"
-            "up path produces a dead link. When a real photo or illustration would "
-            "genuinely help, request one with a fenced ```image-search block "
-            "instead — the app searches for and inserts a real image server-side "
-            "after you finish. Format exactly:\n"
-            "```image-search\n"
-            "query: <short search terms for the general subject or a fitting visual>\n"
-            "caption: <a short caption naming the general idea or theme it represents>\n"
-            "```\n"
-            "in place of an image tag, on its own line. If the app can't find a "
-            "match, the request is silently dropped — so this never breaks the "
-            "response either way."
-        )
+        rules.append(prompt_store.get("content.rules.image.search"))
     else:
-        rules.append(
-            "Only use a Markdown image link for an image you can point to a real, stable "
-            "URL for (e.g. a specific Wikimedia Commons file). NEVER use a placeholder-"
-            "image service (placehold.co, dummyimage.com, via.placeholder.com, "
-            "picsum.photos and the like) and never invent or guess an image URL. If you "
-            "want to convey a figure you have no real URL for, draw it as a Mermaid "
-            "diagram or describe it in a sentence instead — do not emit an image tag."
-        )
+        rules.append(prompt_store.get("content.rules.image.plain"))
 
-    defaults = ["Open with a short orienting paragraph."]
+    defaults = [prompt_store.get("content.defaults.opening")]
     if length != "Low":
         # Worked examples add length on their own — skip suggesting them when
         # the length preference is fighting to stay brief; otherwise the two
         # DEFAULTS pull in opposite directions and brevity tends to lose.
-        defaults.append("Use worked examples where they aid understanding.")
+        defaults.append(prompt_store.get("content.defaults.examples"))
     if summary_section:
-        defaults.append('End with a brief "Summary" section recapping the key points.')
+        defaults.append(prompt_store.get("content.defaults.summary"))
     else:
         # A plain omission isn't enough here — closing with a "Summary" is
         # such a strong, common textbook convention that the model adds one
@@ -194,121 +176,30 @@ def _content_system_prompt(*, no_diagrams: bool = False, no_images: bool = False
         # this off while saying nothing further still produced a Summary
         # section). Needs an explicit negative, the same as no_diagrams/
         # no_images above.
-        defaults.append('Do NOT include a separate "Summary" section.')
+        defaults.append(prompt_store.get("content.defaults.no_summary"))
     if terminology_section:
-        defaults.append(
-            'End with a "Terminology" section (after the Summary, if there is one) '
-            "listing and briefly defining the key terms introduced in this subsection."
-        )
+        defaults.append(prompt_store.get("content.defaults.terminology"))
     else:
-        defaults.append('Do NOT include a separate "Terminology" section.')
+        defaults.append(prompt_store.get("content.defaults.no_terminology"))
     if not no_diagrams:
-        defaults.append({
-            "Low": "Only include a Mermaid diagram if it's genuinely essential — most "
-                   "subsections should have none at all. At most one.",
-            "Medium": "Include about one Mermaid diagram where a process, hierarchy, "
-                      "flow, sequence or timeline genuinely clarifies things. If the "
-                      "user asks for more diagrams, comply — up to about six.",
-            "High": "Look for good opportunities to add Mermaid diagrams — aim for two "
-                    "to four where they'd genuinely help, up to about eight.",
-        }[diagram_frequency])
-        defaults.append(
-            "Keep each Mermaid diagram compact enough to fit on one page: at most ~10 "
-            "nodes, short labels, and for a long chain or sequence use a left-to-right "
-            "flow ('flowchart LR' / 'graph LR') rather than top-down so it stays wide, "
-            "not tall. Split a big process into two smaller diagrams instead of one huge "
-            "one."
-        )
+        defaults.append(prompt_store.get(
+            _frequency_key("content.defaults.diagram_frequency", diagram_frequency)))
+        defaults.append(prompt_store.get("content.defaults.diagram_compact"))
     if not no_images:
-        defaults.append({
-            "Low": "Use images sparingly — only where it truly adds value, and often "
-                   "none at all. At most one.",
-            "Medium": "Use images sparingly — about one where it truly adds value. If "
-                      "the user asks for more images, comply — up to about eight.",
-            "High": "Look for good opportunities to add images — two or three is fine "
-                    "where they'd genuinely help, up to about eight.",
-        }[image_frequency])
+        defaults.append(prompt_store.get(
+            _frequency_key("content.defaults.image_frequency", image_frequency)))
         if use_images:
-            defaults.append(
-                "Keep each image-search query VERY short — just the core subject "
-                "or its proper name, 2-3 words, never a scene description. Strip "
-                'out every context/action/location word: write "fruit basket" not '
-                '"fruit basket on a table", "portfolio" not "portfolio held by a '
-                'man", "BCG matrix" not "BCG growth-share matrix diagram", "eiffel '
-                'tower" not "the eiffel tower at sunset in paris". A search engine '
-                "matches on the bare noun — every extra word narrows the results "
-                "and reliably returns fewer, worse matches, sometimes none at all."
-            )
-            defaults.append(
-                "These images are for visual enrichment, not literal illustration "
-                "— you're not commissioning a bespoke diagram, you're picking "
-                "something with the right idea or feel from what real search "
-                "results actually offer. So the caption should name the general "
-                'concept or a fitting visual metaphor (e.g. "A chart representing '
-                'portfolio diversification", or "Puzzle pieces, representing '
-                'strategic fit") rather than a precise scenario — a real image '
-                "that captures the same theme is a good match even when its exact "
-                "composition differs (a bar chart instead of a pie chart, a "
-                "completed puzzle instead of scattered pieces, etc.)."
-            )
-    defaults.append({
-        "Low": "Keep the body VERY brief — two or three short paragraphs covering "
-               "only the essential point, full stop. No extra subsections, no "
-               "worked example, no deep dive — brevity wins over completeness "
-               "here even if that means leaving nuance out.",
-        "Medium": "Keep it a focused subsection, not an exhaustive treatise.",
-        "High": "Go deep — cover the subsection thoroughly, with more examples, "
-                "nuance and supporting detail than a brief overview would.",
-    }[length])
+            defaults.append(prompt_store.get("content.defaults.image_query_short"))
+            defaults.append(prompt_store.get("content.defaults.image_caption"))
+    defaults.append(prompt_store.get(
+        _frequency_key("content.defaults.length", length)))
 
-    return _frame(
-        "You are an expert textbook author writing the body text for ONE subsection.",
-        rules=rules, defaults=defaults,
-    )
-
-DEFAULT_TEMPLATES = {
-    "outline": (
-        'Please create an outline for a textbook on the topic of "{topic}" '
-        "under {count} main headings."
-    ),
-    "subheadings": (
-        'Please create {count} subheadings for "{title}"{under} in a textbook on "{topic}".'
-    ),
-    "content": (
-        'Please write the textbook content for the subsection "{title}"{under} '
-        'in a textbook on "{topic}".'
-    ),
-}
-
+    return _frame(prompt_store.get("content.intro"), rules=rules, defaults=defaults)
 
 def _under_clause(ancestors: list[str] | None) -> str:
     """`` (nested under "A" › "B")`` for the chain of titles above this node."""
     crumbs = " › ".join(f'"{a.strip()}"' for a in (ancestors or []) if a and a.strip())
     return f" (nested under {crumbs})" if crumbs else ""
-
-
-_REFINE_RULES = (
-    "REVISION RULE: a draft of this subsection is given below. Return the COMPLETE "
-    "revised Markdown and nothing else. Change what the user asks for and leave "
-    "everything else — including image tags and Mermaid blocks — intact."
-)
-
-_CONTEXT_PREAMBLE = (
-    "Below is related material the user picked from elsewhere in the same textbook. "
-    "Use it only as background — for consistent terminology, to avoid repeating what "
-    "it already covers, and to cross-reference where natural. Do NOT copy it, and "
-    "stay within the scope of your assigned task.\n\n"
-)
-
-_OUTLINE_PREAMBLE = (
-    "Below is the book's outline (titles only, no body text) so you can see how the "
-    "whole book is structured and where your assigned subsection sits within it — "
-    "which chapter it belongs to, and what comes before and after it. If any extra "
-    "context was picked, its place in the outline is flagged too. Use this only to "
-    "keep a sensible progression, consistent terminology, and to avoid overlapping "
-    "what nearby sections already cover — do NOT restate this outline, and do not "
-    "write content for any node other than the one you were assigned.\n\n"
-)
 
 
 def build_messages(mode: str, user_prompt: str, *, tone: str | None = None,
@@ -338,12 +229,12 @@ def build_messages(mode: str, user_prompt: str, *, tone: str | None = None,
             terminology_section=terminology_section,
         )
     else:
-        system_prompt = SYSTEM_PROMPTS[mode]
+        system_prompt = _list_system_prompt(mode)
     parts = [system_prompt]
 
-    style = [h for h in (_TONE_HINT.get(tone or ""), _DEPTH_HINT.get(depth or "")) if h]
+    style = style_line(tone, depth)
     if style:
-        parts.append("STYLE (a DEFAULT — the user may override): " + " ".join(style))
+        parts.append(style)
     if overarching:
         # A standing preference the user set once for this book (e.g. "don't use
         # em-dashes") so they don't have to repeat it in every prompt. Same
@@ -353,29 +244,23 @@ def build_messages(mode: str, user_prompt: str, *, tone: str | None = None,
         # precedence note elsewhere in the prompt is easy for the model to
         # under-weight against a concrete, specific DEFAULT bullet.
         parts.append(
-            "USER'S STANDING PREFERENCE for this book — apply it throughout this "
-            "response, even where it means skipping something a DEFAULT above "
-            "suggested (RULES still win if there's a genuine conflict): "
-            + overarching
+            prompt_store.get("shared.standing_preference_wrapper") + overarching
         )
     if _EM_DASH_RE.search(combined_hint):
-        parts.append(
-            "STRICT STYLE CHECK: the user does not want em-dashes (—) anywhere in this "
-            "response. Use a comma, colon, period, or parentheses instead. Before "
-            "finishing, mentally scan your draft for the — character and rephrase any "
-            "sentence that has one."
-        )
+        parts.append(prompt_store.get("shared.no_em_dash"))
     if mode == "content" and refine_source is not None:
-        parts.append(_REFINE_RULES)
-    parts.append(OVERRIDE_NOTE)
+        parts.append(prompt_store.get("common.refine_rule"))
+    parts.append(override_note())
 
     messages = [{"role": "system", "content": "\n\n".join(parts)}]
     if book_outline and book_outline.strip():
-        messages.append({"role": "user", "content": _OUTLINE_PREAMBLE + book_outline.strip()})
+        messages.append({"role": "user", "content": prompt_store.get(
+            "common.outline_preamble") + "\n\n" + book_outline.strip()})
     if context_blocks:
         joined = "\n\n----------\n\n".join(b.strip() for b in context_blocks if b.strip())
         if joined:
-            messages.append({"role": "user", "content": _CONTEXT_PREAMBLE + joined})
+            messages.append({"role": "user", "content": prompt_store.get(
+                "common.context_preamble") + "\n\n" + joined})
     if mode == "content" and refine_source is not None:
         messages.append({"role": "user",
                          "content": "Current draft:\n\n" + refine_source.strip()})
@@ -385,7 +270,7 @@ def build_messages(mode: str, user_prompt: str, *, tone: str | None = None,
 
 def default_prompt(mode: str, *, topic: str = "", title: str = "",
                    ancestors: list[str] | None = None, count: int = 3) -> str:
-    return DEFAULT_TEMPLATES[mode].format(
+    return prompt_store.get(f"template.{mode}").format(
         topic=topic or "this topic",
         title=title or "this section",
         under=_under_clause(ancestors),

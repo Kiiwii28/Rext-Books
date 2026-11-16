@@ -20,12 +20,13 @@ from flask import (
 from werkzeug.utils import secure_filename
 
 import config
-import deepseek
 import epub
 import export
 import images
+import llm
 import pages
 import palettes
+import prompt_store
 import prompts
 import sparks
 import store
@@ -58,58 +59,150 @@ def index():
 
 @app.get("/health")
 def health():
-    return jsonify({"status": "ok", "model": config.DEEPSEEK_MODEL,
+    status = config.llm_status()
+    return jsonify({"status": "ok",
+                    "provider": status["provider"],
+                    "label": status["label"],
+                    "model": status["model"],
                     "pdf": export.pdf_available(), "pdfEngine": export.pdf_engine()})
 
 
 # --------------------------------------------------------------------------- #
-#  Settings (API key)                                                          #
+#  Settings (provider, model, API keys)                                        #
 # --------------------------------------------------------------------------- #
 
-@app.get("/api/settings")
-def api_get_settings():
-    return jsonify({
-        "hasApiKey": bool(config.get_api_key()),
-        "keySource": config.api_key_source(),   # "settings" | "env" | "none"
-        "model": config.DEEPSEEK_MODEL,
+def _settings_payload() -> dict:
+    """Everything the Settings dialog needs, and nothing secret. The key is
+    only ever reported as present/absent plus where it came from."""
+    active = config.llm_status()
+    return {
+        # Generation model selection.
+        "provider": active["provider"],
+        "providerLabel": active["label"],
+        "model": active["model"],
+        "defaultModel": active["defaultModel"],
+        "models": active["models"],
+        "contextChars": active["contextChars"],
+        "providers": config.llm_providers(),
+        # Credential state for the active provider only (never the key itself).
+        "hasApiKey": active["hasApiKey"],
+        "keySource": active["keySource"],
+        "keyPlaceholder": active["keyPlaceholder"],
+        "keysUrl": active["keysUrl"],
+        # Book / export settings.
         "author": config.get_author(),
         "blurbTemplate": config.get_blurb_template(),
         "blurbDefault": config.DEFAULT_BLURB_TEMPLATE,
         "hasPexelsKey": bool(config.get_pexels_key()),
         "pexelsUsage": config.get_pexels_usage(),
-    })
+    }
+
+
+@app.get("/api/settings")
+def api_get_settings():
+    return jsonify(_settings_payload())
 
 
 @app.post("/api/settings")
 def api_save_settings():
     data = request.get_json(silent=True) or {}
-    if not {"apiKey", "author", "blurbTemplate", "pexelsApiKey"} & data.keys():
-        return jsonify({"error": "apiKey, author, blurbTemplate or pexelsApiKey is required"}), 400
+    if not {"apiKey", "provider", "model", "author", "blurbTemplate",
+            "pexelsApiKey"} & data.keys():
+        return jsonify({
+            "error": "apiKey, provider, model, author, blurbTemplate or "
+                     "pexelsApiKey is required"
+        }), 400
+    # Provider first: a model/key sent alongside it belongs to that provider.
+    if "provider" in data:
+        try:
+            config.set_llm_provider(data.get("provider") or "")
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+    target = data.get("provider") or config.get_llm_provider()
+    if "model" in data:
+        config.set_llm_model(data.get("model") or "", provider=target)
     if "apiKey" in data:
-        config.set_api_key(data.get("apiKey") or "")
+        config.set_api_key(data.get("apiKey") or "", provider=target)
     if "author" in data:
         config.set_author(data.get("author") or "")
     if "blurbTemplate" in data:
         config.set_blurb_template(data.get("blurbTemplate") or "")
     if "pexelsApiKey" in data:
         config.set_pexels_key(data.get("pexelsApiKey") or "")
-    return jsonify({
-        "hasApiKey": bool(config.get_api_key()),
-        "keySource": config.api_key_source(),
-        "author": config.get_author(),
-        "blurbTemplate": config.get_blurb_template(),
-        "hasPexelsKey": bool(config.get_pexels_key()),
-    })
+    return jsonify(_settings_payload())
 
 
 @app.post("/api/settings/test")
 def api_test_settings():
     data = request.get_json(silent=True) or {}
-    key = (data.get("apiKey") or "").strip() or config.get_api_key()
+    provider = data.get("provider")
+    key = (data.get("apiKey") or "").strip() or config.get_api_key(provider)
     if not key:
-        return jsonify({"ok": False, "error": "No API key to test."}), 400
-    ok, message = deepseek.test_key(key)
-    return jsonify({"ok": ok, "error": None if ok else message})
+        label = config.llm_status(provider)["label"]
+        return jsonify({"ok": False, "error": f"No {label} API key to test."}), 400
+    model = (data.get("model") or "").strip() or None
+    ok, message = llm.test_key(key, provider=provider, model=model)
+    return jsonify({"ok": ok, "message": message, "error": None if ok else message})
+
+
+# --------------------------------------------------------------------------- #
+#  Prompt text (Settings → Advanced)                                           #
+# --------------------------------------------------------------------------- #
+#
+# The golden text lives in prompts.defaults.json; user edits go to
+# prompts.local.json as sparse overrides. Nothing here touches the code path's
+# prompt assembly — it only edits the data that assembly reads, so an edit
+# applies to the very next generation.
+
+@app.get("/api/prompts")
+def api_get_prompts():
+    return jsonify({"blocks": prompt_store.blocks()})
+
+
+@app.post("/api/prompts")
+def api_save_prompts():
+    data = request.get_json(silent=True) or {}
+    blocks = data.get("blocks")
+    if not isinstance(blocks, dict):
+        return jsonify({"error": "blocks must be an object of {key: text}"}), 400
+    updates = {k: v for k, v in blocks.items() if isinstance(v, str)}
+    try:
+        warnings = prompt_store.set_overrides(updates)
+    except KeyError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"blocks": prompt_store.blocks(), "warnings": warnings})
+
+
+@app.post("/api/prompts/reset")
+def api_reset_prompts():
+    data = request.get_json(silent=True) or {}
+    keys = data.get("keys")
+    if keys is not None and not isinstance(keys, list):
+        return jsonify({"error": "keys must be a list of prompt ids"}), 400
+    prompt_store.reset([str(k) for k in keys] if keys is not None else None)
+    return jsonify({"blocks": prompt_store.blocks()})
+
+
+@app.post("/api/prompts/preview")
+def api_preview_prompts():
+    data = request.get_json(silent=True) or {}
+    mode = data.get("mode") or "content"
+    if mode not in prompts.MODES:
+        return jsonify({"error": f"mode must be one of {prompts.MODES}"}), 400
+    messages = prompts.build_messages(
+        mode,
+        data.get("prompt") or prompts.default_prompt(
+            mode, topic="the book's topic", title="Sample subsection", count=3),
+        tone=data.get("tone") or None,
+        depth=data.get("depth") or None,
+        use_images=bool(data.get("useImages")),
+        image_frequency=data.get("imageFrequency") or "Medium",
+        diagram_frequency=data.get("diagramFrequency") or "Medium",
+        length=data.get("length") or "Medium",
+        summary_section=bool(data.get("summarySection", True)),
+        terminology_section=bool(data.get("terminologySection")),
+    )
+    return jsonify({"messages": messages})
 
 
 @app.post("/render")
@@ -453,7 +546,7 @@ def _collect_context(book: dict, ids: list, *, exclude_ids: set | None = None) -
     if not want:
         return []
 
-    budget = config.CONTEXT_CHAR_BUDGET
+    budget = config.get_context_char_budget()
     lines: list[str] = []
 
     def rec(nodes: list[dict], depth: int) -> None:
@@ -525,9 +618,87 @@ def _titled_id(book: dict, node_id: str | None) -> str | None:
     return node_id
 
 
+# How many times a response cut off by the provider's output limit is
+# continued automatically before the cut is reported to the user. Two is
+# enough to finish any realistic section (the cut happens around a few
+# thousand visible tokens), and each round re-sends the text written so far,
+# so a larger number only adds cost — it does not buy much extra length.
+MAX_CONTINUATIONS = 2
+
+
+# A response only counts as finished when it ends on something sentence-shaped:
+# terminal punctuation, a closing bracket/quote/emphasis marker, a table row, or
+# a closed code fence. Used together with "the provider sent no finish_reason at
+# all" to decide whether a stream died early (see _stream_chat_response).
+_TERMINAL_TAIL = re.compile(r"(?:[.!?\u2026:)\]}`|*])\s*$")
+
+
+def _looks_unfinished(text: str) -> bool:
+    """Whether the text visibly stops mid-thought.
+
+    Only consulted when the provider sent no terminal chunk, so a normal reply
+    (which always ends with a finish_reason) is never second-guessed. An
+    unterminated ``` fence is conclusive on its own; otherwise the tail just
+    has to end on punctuation rather than a bare word."""
+    tail = (text or "").rstrip()
+    if not tail:
+        return False
+    if tail.count("```") % 2:
+        return True
+    return not _TERMINAL_TAIL.search(tail)
+
+
+def _trim_continuation_overlap(base: str, addition: str) -> str:
+    """Drop the start of a continuation round that repeats the text it resumed from.
+
+    Models usually carry straight on, but one that restarts at the beginning of
+    the sentence it broke inside ("…If the vict" -> "If the victim is chosen…")
+    repeats words that are already in the section. So instead of comparing raw
+    prefixes, ask whether the start of the new text already appears in the tail
+    of the old text: if it does, everything up to the end of that occurrence is
+    a repeat and gets dropped.
+
+    Only an overlap of 10+ characters counts, so a continuation that merely
+    opens with a common word ("The …", "This …") is never eaten."""
+    if not base or not addition:
+        return addition
+    tail = base[-500:]
+    for k in range(min(len(addition), 400), 9, -1):
+        if tail.rfind(addition[:k]) >= 0:
+            return addition[k:]
+    return addition
+
+
+# How many extra rounds a finished-but-too-short section may get before the
+# result is accepted as-is. One is enough: the extension asks for the missing
+# depth in a single, coherent addition, and more rounds would risk turning a
+# 1,500-word section into a 4,000-word one. See _LENGTH_MIN_WORDS for why this
+# exists at all.
+MAX_LENGTH_EXTENSIONS = 1
+
+# Minimum prose words per Length setting. The prompt already gives the model a
+# target range, but a small model can ignore it outright — gemini-3.5-flash-lite
+# produced 618 prose words for a setting that asked for 1,400-2,000, while
+# DeepSeek wrote 1,702 for the same prompt. Rather than hoping a prompt wording
+# wins, the floor is enforced here: a finished section below it is extended
+# once before it is saved. High is set near what DeepSeek actually writes with
+# the same prompt (~2,000+ prose words), so both providers land in the same
+# range; Low is deliberately 0 — brevity needs no guard.
+_LENGTH_MIN_WORDS = {"Low": 0, "Medium": 500, "High": 1700}
+
+
+def _prose_word_count(text: str) -> int:
+    """Words of actual prose: code fences and Markdown table rows don't count,
+    since neither is what the Length setting is really about."""
+    body = re.sub(r"```.*?```", "", text or "", flags=re.DOTALL)
+    body = "\n".join(l for l in body.splitlines() if not l.strip().startswith("|"))
+    return len(re.findall(r"[A-Za-z']+", body))
+
+
 def _stream_chat_response(messages: list[dict], start_payload: dict,
                           *, resolve_images_book_id: str | None = None,
-                          resolve_images_source: str = "auto") -> Response:
+                          resolve_images_source: str = "auto",
+                          min_words: int = 0) -> Response:
     """Shared SSE wrapper for /api/ai/generate and /api/ai/spark.
 
     When ``resolve_images_book_id`` is set (content mode with the "Use
@@ -538,16 +709,94 @@ def _stream_chat_response(messages: list[dict], start_payload: dict,
     with that text rather than trying to patch deltas in place, since the
     resolution can both remove placeholders entirely (nothing found) and
     change their length (a placeholder block vs. the inserted Markdown)."""
+    profile = config.llm_status()
+
     @stream_with_context
     def generate():
-        yield _sse("start", start_payload)
-        full_parts: list[str] = []
+        yield _sse("start", {**start_payload, "provider": profile["provider"],
+                             "label": profile["label"], "model": profile["model"]})
+        text = ""
+        meta: dict = {}
+        continuations = 0
+        extensions = 0
+        round_messages = messages
         try:
-            for piece in deepseek.stream_chat(messages):
-                full_parts.append(piece)
-                yield _sse("delta", {"text": piece})
+            while True:
+                meta.clear()
+                before_round = len(text)
+                round_parts: list[str] = []
+                for piece in llm.stream_chat(round_messages, meta=meta):
+                    round_parts.append(piece)
+                    yield _sse("delta", {"text": piece})
+                text += "".join(round_parts)
+                if before_round:
+                    # A continuation round just ended — remove anything it
+                    # repeated from the tail it was shown (see the helper).
+                    # Deltas have already reached the client, so the corrected
+                    # text is sent as "revise", which replaces the client's
+                    # accumulated buffer wholesale.
+                    kept = _trim_continuation_overlap(text[:before_round], text[before_round:])
+                    if kept != text[before_round:]:
+                        text = text[:before_round] + kept
+                        yield _sse("revise", {"text": text})
+                if not meta.get("truncated") and not (
+                        meta.get("incomplete") and _looks_unfinished(text)
+                        and start_payload.get("mode") in ("content", "spark")):
+                    # The reply finished on its own. If the Length setting asked
+                    # for more than it produced, ask for the missing depth now —
+                    # once — instead of saving a section that is half the length
+                    # the user selected.
+                    written = _prose_word_count(text)
+                    if (min_words and extensions < MAX_LENGTH_EXTENSIONS
+                            and written < min_words):
+                        extensions += 1
+                        print(f"[app] {start_payload.get('mode')} finished at "
+                              f"{written} prose words, under the {min_words}-word "
+                              f"floor — asking the model to extend",
+                              file=sys.stderr, flush=True)
+                        yield _sse("status", {"message":
+                            f"{written} words so far — extending to the requested "
+                            "length…"})
+                        round_messages = messages + [
+                            {"role": "assistant", "content": text},
+                            {"role": "user", "content": prompt_store.get(
+                                "shared.length_extension", written=written,
+                                target=min_words)},
+                        ]
+                        continue
+                    break
+                # "length" / "MAX_TOKENS" means the provider stopped mid-word
+                # because its output budget ran out. No finish_reason at all
+                # means the connection just ended — Gemini does both, and neither
+                # one is visible to the user. Rather than save a half-written
+                # section, ask the model to carry on from exactly where it
+                # stopped and stitch the pieces together.
+                if continuations >= MAX_CONTINUATIONS:
+                    break
+                continuations += 1
+                print(f"[app] {start_payload.get('mode')} response stopped early "
+                      f"(finish_reason={meta.get('finish_reason')!r}, "
+                      f"truncated={bool(meta.get('truncated'))}) after "
+                      f"{len(text)} chars — asking the model to continue "
+                      f"({continuations}/{MAX_CONTINUATIONS})",
+                      file=sys.stderr, flush=True)
+                yield _sse("status", {"message":
+                    ("The model hit its output limit" if meta.get("truncated")
+                     else "The reply stopped early")
+                    + " — continuing where it stopped "
+                    f"({continuations}/{MAX_CONTINUATIONS})…"})
+                round_messages = messages + [
+                    {"role": "assistant", "content": text},
+                    {"role": "user", "content": prompts.continuation_prompt()},
+                ]
+            still_cut = bool(meta.get("truncated") or meta.get("incomplete"))
+            if still_cut:
+                # Still cut after every continuation — say so honestly rather
+                # than letting the end of the section look deliberate.
+                yield _sse("status", {"message":
+                    "The response ended before it finished — this may be cut short."})
             if resolve_images_book_id:
-                original = "".join(full_parts)
+                original = text
                 full = original
                 # The model is instructed to request images only via a
                 # ```image-search block and to NEVER hand-write a Markdown
@@ -581,7 +830,11 @@ def _stream_chat_response(messages: list[dict], start_payload: dict,
                         yield _sse("status", {"message": f"Found {resolved} of {total} image(s)."})
                 if revised != original:
                     yield _sse("revise", {"text": revised})
-            yield _sse("done", {})
+            # The client uses this to decide whether "Content updated ✓" is the
+            # honest message — a cut-short result must not be reported as a
+            # clean success.
+            yield _sse("done", {"truncated": still_cut,
+                                "continuations": continuations})
         except requests.HTTPError as exc:
             yield _sse("error", {"message": str(exc)})
         except requests.RequestException as exc:
@@ -684,7 +937,12 @@ def api_generate():
     return _stream_chat_response(messages, {
         "mode": mode, "refine": refine_source is not None, "context": len(context_blocks),
     }, resolve_images_book_id=(book_id if mode == "content" and use_images else None),
-       resolve_images_source=image_source)
+       resolve_images_source=image_source,
+       # A refine is a revision of an existing draft, not a request for a longer
+       # one — extending it would silently add new sections the user didn't ask
+       # for when they only wanted the draft reworked.
+       min_words=0 if refine_source is not None
+       else _LENGTH_MIN_WORDS.get(length, 0) if mode == "content" else 0)
 
 
 @app.post("/api/ai/spark")
@@ -709,7 +967,7 @@ def api_spark():
     if a_node is None or b_node is None:
         return jsonify({"error": "pick two blocks from this book"}), 400
 
-    half = max(2000, config.CONTEXT_CHAR_BUDGET // 2)
+    half = max(2000, config.get_context_char_budget() // 2)
     settings = book.get("settings") or {}
     messages = sparks.build_spark_messages(
         spark_mode, user_prompt,

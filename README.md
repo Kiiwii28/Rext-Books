@@ -7,12 +7,16 @@ Start from a topic. Generate an **outline** (headings). For any heading, generat
 rearrange, edit, add, delete, and rewrite blocks by hand, Notion-style — and
 export the finished book.
 
-Generation uses **DeepSeek** (OpenAI-compatible API), streamed token-by-token.
+Generation runs against an **OpenAI-compatible** chat API, streamed
+token-by-token. **DeepSeek** and **Google Gemini** are both built in — pick the
+provider and model in **⚙ Settings**, no restart needed, and each provider keeps
+its own key and model.
 
 ## Requirements
 
 - Python 3.9+
-- A DeepSeek API key
+- A DeepSeek **or** Google Gemini API key (or any other OpenAI-compatible
+  endpoint, via the env overrides below)
 - (optional) Pango/cairo for PDF export — see below
 
 ## Setup
@@ -25,19 +29,53 @@ cp .env.example .env        # then put your key in .env
 `.env`:
 
 ```
+# Which provider is active (a choice saved in ⚙ Settings wins over this).
+LLM_PROVIDER=deepseek                  # or: gemini
+
 DEEPSEEK_API_KEY=sk-...
-DEEPSEEK_MODEL=deepseek-v4-flash     # cheapest; change if the API rejects it
+DEEPSEEK_MODEL=deepseek-v4-flash        # cheapest; change if the API rejects it
 DEEPSEEK_BASE_URL=https://api.deepseek.com
+
+GEMINI_API_KEY=AIza...
+GEMINI_MODEL=gemini-3.8-flash           # Google retires old model names — Test key names the current one
+GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
 ```
+
+`LLM_MODEL` / `LLM_BASE_URL` / `LLM_API_KEY` are generic overrides for whichever
+provider is active. Only the selected provider's key is ever needed.
 
 `.env` is gitignored and read only on the server — the key never reaches the browser.
 
-**Or skip `.env` entirely** and set the key from inside the running app: **⚙
-Settings** in the topbar → paste a key → **Save**. It's written to
-`local_settings.json` next to the app (also gitignored, also never sent back to
-the browser) and overrides `.env` if both are present — so a packaged build can
-be handed to someone else with their own key, without them touching a file. If
-neither is set, the app opens Settings automatically on first launch.
+**Prompt text is data.** Every instruction the app sends lives in
+`prompts.defaults.json` — the golden source of truth. Open **⚙ Settings →
+Advanced — prompt text** to see all of it, edit any block (tone hints, depth
+hints, length targets, diagram/image wording, Spark mode text, the image-search
+judge…), and **Save prompts**; edits are written to `prompts.local.json` (also
+gitignored) as sparse overrides and apply to the next generation. **Reset** on a
+block deletes that override, so it reverts to whatever `prompts.defaults.json`
+says *now* — including any later prompt fixes — and **Reset all** clears every
+override. The panel's *Preview* builds the exact system/user messages for a
+chosen mode, tone, depth and length, so you can see what the model will actually
+be told. Blocks marked ⚠ are parsed by the app (numbered-list output, Mermaid
+fences, `image-search` blocks, the Spark title line, the image judge's one-word
+verdict) — editing those can silently break that feature. The golden file is
+read at startup, so editing it by hand needs a server restart; overrides do not.
+
+
+**Or skip `.env` entirely** and configure everything from inside the running
+app: **⚙ Settings** in the topbar → pick a **provider**, its **model**, paste
+the matching key → **Save**. The model field is a dropdown of known names for
+that provider (Gemini currently offers `gemini-3.8-flash`, `gemini-3.6-flash`,
+`gemini-3.5-flash-lite` and `gemini-3.1-flash-lite`) and also accepts any other
+name the provider recognises, so switching between models to compare speed or
+quality is just a pick + Save. Pasting a key and pressing **Enter** (or hitting
+**Test key**) saves it immediately — the Save button is only needed for the
+other fields. Keys are written to `local_settings.json` next to
+the app (also gitignored, also never sent back to the browser) and override
+`.env` if both are present — so a packaged build can be handed to someone else
+with their own key, without them touching a file. Each provider has its own
+key and model, so switching is instant and lossless. If neither is set, the app
+opens Settings automatically on first launch.
 
 ## Run
 
@@ -57,7 +95,7 @@ Open <http://127.0.0.1:5000>.
   topbar/AI-panel tour; open a book with some content and the block-level
   steps join in too.
 - **Recursive generation** — outline → subheadings → section content, each step a
-  streamed DeepSeek call scoped to the selected block.
+  streamed LLM call scoped to the selected block.
 - **Notion-style blocks** — drag to reorder, collapse, add, delete, rename inline.
 - **Resizable panels** — drag the divider between the Outline and AI Assistant
   panels to resize; double-click it to reset. Remembered across reloads.
@@ -78,8 +116,9 @@ Open <http://127.0.0.1:5000>.
   outline to feed them to the LLM as reference for the current generation. Ticking a
   heading/subheading auto-ticks its whole subtree; untick any child you don't want.
   The chip row collapses to the top nodes (`Roots +N`). Budget is ~400k chars
-  (`REXTBOOKS_CONTEXT_CHARS`) — DeepSeek v4 has a 1M-token window, so half a textbook
-  of context is fine. Per-generation; clears when you pick another block.
+  (`REXTBOOKS_CONTEXT_CHARS` overrides it; otherwise sized per provider) — DeepSeek
+  v4 and Gemini 2.5 both take ~1M input tokens, so half a textbook of context is
+  fine. Per-generation; clears when you pick another block.
 - **Bulk generate (`⧉`)** — **⧉ Bulk** in the dock, tick two or more *sibling* blocks
   (same parent, same kind), then **Generate**. Each block is generated by its own
   separate, sequential request — so the model writes each at full length instead of
@@ -230,9 +269,13 @@ time there's no key configured at all.
 | File | Role |
 | --- | --- |
 | `app.py` | Routes: pages, book CRUD, SSE generation, render, images, export |
-| `config.py` | Loads `.env`; exposes key / model / base URL |
-| `deepseek.py` | Streaming + plain Chat Completions calls |
-| `prompts.py` | System prompts (RULES vs overridable DEFAULTS), tone/depth, refine, context, templates |
+| `config.py` | Loads `.env`; provider presets, active provider/model/key selection |
+| `llm.py` | Streaming + plain Chat Completions calls, for any OpenAI-compatible provider (DeepSeek, Gemini, …) |
+| `deepseek.py` | Deprecated alias for `llm.py` |
+| `prompts.py` | Prompt assembly (RULES vs overridable DEFAULTS), tone/depth, refine, context, templates — the text itself comes from `prompts.defaults.json` |
+| `prompt_store.py` | Loads the golden prompt text + sparse user overrides; reset/save for Settings → Advanced |
+| `prompts.defaults.json` | **Golden source of truth** for every prompt string the app sends |
+| `prompts.local.json` | Your edits from Settings → Advanced (gitignored, created on first save) |
 | `sparks.py` | The ten Spark modes + `build_spark_messages` |
 | `store.py` | Book JSON persistence, per-book asset folders, versioned snapshots, import |
 | `rendering.py` | Shared Markdown → HTML (turns ```mermaid fences into figures) |
@@ -263,7 +306,7 @@ Books are `books/<id>.json`. The browser owns the tree and PUTs the whole book
 | `js/main.js` | bootstrap, book switching, import |
 | `js/book-picker.js` | custom-styled book switcher (a native `<select>`'s dropdown can't be skinned) |
 | `js/tour.js` | the 🎓 Tutorial — spotlighted, step-by-step walkthrough |
-| `js/settings-panel.js` | ⚙ Settings modal — API key, author |
+| `js/settings-panel.js` | ⚙ Settings modal — provider, model, per-provider API keys, author |
 | `js/resize.js` | draggable divider between the Outline and AI Assistant panels |
 | `css/style.css` | mint-green base, translucent teal glass panels, shine + iridescence |
 
