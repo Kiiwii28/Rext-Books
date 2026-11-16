@@ -827,8 +827,17 @@ def _stream_chat_response(messages: list[dict], start_payload: dict,
     change their length (a placeholder block vs. the inserted Markdown)."""
     profile = config.llm_status()
 
-    @stream_with_context
-    def generate():
+    # The response body is produced *after* this view returns, by which point
+    # Flask has torn the request down — including the per-request key bundle
+    # that ``before_request`` resolved. Without re-applying it here, every
+    # streamed generation silently fell back to the machine's own keys (or
+    # none): a bundle user saw "400 Please pass a valid API key" even though
+    # Settings correctly showed their bundle and provider. Capture the ids
+    # while the request is still alive and restore them for the whole stream.
+    bundle_id = session.get("bundle")
+    provider_pref = session.get("provider")
+
+    def _generate_body():
         yield _sse("start", {**start_payload, "provider": profile["provider"],
                              "label": profile["label"], "model": profile["model"]})
         text = ""
@@ -957,6 +966,15 @@ def _stream_chat_response(messages: list[dict], start_payload: dict,
             yield _sse("error", {"message": f"network error: {exc}"})
         except RuntimeError as exc:  # missing API key etc.
             yield _sse("error", {"message": str(exc)})
+
+    @stream_with_context
+    def generate():
+        config.set_active_bundle(bundle_id)
+        config.set_request_provider(provider_pref)
+        try:
+            yield from _generate_body()
+        finally:
+            config.clear_active_bundle()
 
     return Response(generate(), mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

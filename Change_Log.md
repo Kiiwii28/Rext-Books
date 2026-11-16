@@ -9,6 +9,41 @@ From 2026-09-20 onward, entries are logged at the time each change is made.
 
 ---
 
+## 2026-11-16 (night, CRITICAL: bundle keys not used when streaming)
+
+**A key bundle was correct in Settings but the generation used the machine's own
+keys instead** — reported as "Google Gemini 400: Please pass a valid API key"
+(and the same failure on DeepSeek) for both people, on the hosted instance.
+
+Cause: `_stream_chat_response` returns a generator whose body runs **after** the
+view returns. Flask tears the request down at that point, so
+`teardown_request`'s `config.clear_active_bundle()` had already run before the
+first `llm.stream_chat()` — every streamed call therefore resolved keys without
+the bundle and fell back to `local_settings.json`/env. The Settings dialog
+(non-streaming) was unaffected, which is why unlocking "worked" and showed both
+providers while generation still failed. It silently used whatever old
+`GEMINI_API_KEY` / `DEEPSEEK_API_KEY` env vars the service had, so both providers
+failed identically for both users.
+
+- Fix: `_stream_chat_response` captures `session["bundle"]` and
+  `session["provider"]` while the request is alive and re-applies them at the
+  top of the generator (`set_active_bundle` / `set_request_provider`), clearing
+  them in a `finally`. This also covers the post-stream work that needs keys —
+  image-search judging and Pexels lookups.
+- Reproduction (before the fix), with an empty `local_settings.json` and
+  deliberately invalid env keys: Settings reported `provider=gemini,
+  keySource=bundle`, the `start` event said Gemini, and the actual call failed
+  with **"DeepSeek 401 … NOT-A-REAL-DEEPSEEK-KEY is invalid"** — proof the
+  stream had fallen back to the environment. After the fix the same session
+  generated 1,209 characters on DeepSeek through the bundle key, and the Gemini
+  call reached Google (which returned a transient 503).
+- Verified the reported keys themselves are fine: the Gemini key works on
+  `/v1beta/models` and on the OpenAI-compatible endpoint, and both DeepSeek keys
+  return 200 on `/models`. `gemini-3.8-flash` was returning **503 "high demand"**
+  at the time while `gemini-3.6-flash`, `gemini-3.5-flash-lite` and
+  `gemini-3.1-flash-lite` all returned 200 — so a 503 in that situation is the
+  model, not the key; pick a different model in Settings → Model.
+
 ## 2026-11-16 (night, subtle key UI)
 
 **The key bundle moved out of the Settings body and behind a 🔑 icon.**
