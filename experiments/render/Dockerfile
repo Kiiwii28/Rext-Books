@@ -38,9 +38,14 @@ RUN pip install --no-cache-dir -r requirements.txt gunicorn
 
 # Runtime files only. books/, local_settings.json and .env must never be baked
 # into an image (the root .dockerignore enforces this as well).
-COPY app.py config.py llm.py deepseek.py prompts.py prompt_store.py \
-     prompts.defaults.json sparks.py images.py store.py rendering.py \
-     export.py epub.py pdfgen.py pages.py compress.py palettes.py ./
+#
+# `*.py` rather than an itemised list on purpose: this list used to name every
+# module explicitly, and adding a new one (`bundle.py`, for the JSON+images
+# export) meant the image booted with `ModuleNotFoundError: No module named
+# 'bundle'` while the same code ran fine locally. Every .py at the repo root is
+# an app module — the portable build and any scratch scripts live in folders
+# that .dockerignore already drops — so globbing can't miss one.
+COPY *.py prompts.defaults.json ./
 COPY templates ./templates
 COPY static ./static
 

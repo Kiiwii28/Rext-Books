@@ -9,6 +9,30 @@ From 2026-09-20 onward, entries are logged at the time each change is made.
 
 ---
 
+## 2026-11-17 (Render deploy failed: `No module named 'bundle'`)
+
+Deploy exited with status 3, `gunicorn` worker failing to boot at
+`/srv/app.py` line 41 (`from bundle import book_to_bundle, read_bundle,
+rebind_images`) — while the same code ran fine locally and in
+`dist-portable/`.
+
+Cause: `experiments/render/Dockerfile` copied the app's modules from an
+**itemised** list (`COPY app.py config.py llm.py … palettes.py ./`). Adding
+`bundle.py` for the new JSON+images export never touched that list, so the
+image shipped `app.py` without the module it imports. Nothing else was wrong —
+no missing dependency, no ignore rule.
+
+- Fix: the COPY now globs the app's own modules
+  (`COPY *.py prompts.defaults.json ./`), with a comment recording the
+  failure. Every `.py` at the repo root is an app module (the portable build
+  and any scratch work live in folders `.dockerignore` already drops), so a
+  future new module can't be forgotten this way. `templates/` and `static/`
+  are still copied explicitly.
+- Verified by rebuilding the exact file set the Dockerfile now produces in a
+  temp directory and importing `bundle` + `app` from it — image boot OK.
+- **Remember:** `.dockerignore` is not the issue and needs no change; the
+  Dockerfile is the only place with a file list.
+
 ## 2026-11-17 (JSON export carries its images; Summary/Terminology don't count towards Length)
 
 **Two changes, both about a book's own words and pictures leaving and coming
