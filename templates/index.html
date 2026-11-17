@@ -34,8 +34,8 @@
     </div>
     <div class="topbar-actions">
       <button id="btn-new-book" class="btn ghost">New book</button>
-      <button id="btn-import-book" class="btn ghost" title="Import a book from a .json file">Import</button>
-      <input id="import-file" type="file" accept=".json,application/json" hidden />
+      <button id="btn-import-book" class="btn ghost" title="Import a book from a .zip bundle or .json file">Import</button>
+      <input id="import-file" type="file" accept=".json,.zip,application/json,application/zip" hidden />
       <button id="btn-export" class="btn ghost" title="Export this book">Export</button>
       <button id="btn-delete-book" class="btn ghost danger" title="Delete this book">Delete</button>
       <button id="btn-tutorial" class="mini-btn" title="Tutorial" aria-label="Start the tutorial">🎓</button>
@@ -246,7 +246,7 @@
             <button class="seg-btn" data-fmt="epub" role="tab">EPUB</button>
             <button class="seg-btn" data-fmt="md" role="tab">Markdown</button>
             <button class="seg-btn" data-fmt="pages" role="tab">Pages</button>
-            <button class="seg-btn" data-fmt="json" role="tab">JSON</button>
+            <button class="seg-btn" data-fmt="json" role="tab">JSON + images</button>
           </div>
         </div>
 

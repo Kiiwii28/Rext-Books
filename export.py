@@ -661,7 +661,7 @@ def _stamp_page_numbers(pdf_bytes: bytes, chapter_titles: set[str], major_titles
 
 
 def book_to_pdf(book: dict, palette_name: str | None, base_url: str, exclude_ids: set | None = None,
-                lite: bool = False, page_numbers: bool = False) -> bytes:
+                lite: bool = False, page_numbers: bool = False, token: str = "") -> bytes:
     engine = pdf_engine()
     if engine == "browser":
         url = (
@@ -670,6 +670,10 @@ def book_to_pdf(book: dict, palette_name: str | None, base_url: str, exclude_ids
         )
         if exclude_ids:
             url += f"&exclude={quote(','.join(exclude_ids))}"
+        # Headless Chrome has no session cookie; the token is what authorises
+        # this render for a book that belongs to the requesting browser.
+        if token:
+            url += f"&token={quote(token)}"
         pdf = pdfgen.url_to_pdf(url)
         chapters, majors = set(), set()
         try:

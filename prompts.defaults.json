@@ -61,9 +61,9 @@
     "shared.length_extension": {
       "group": "Shared",
       "label": "Continuation request (too short)",
-      "help": "Sent when a finished section came in under the Length setting's word floor (see _LENGTH_MIN_WORDS in app.py). Placeholders: {written}, {target}.",
+      "help": "Sent when a finished section came in under the Length setting's word floor (see _LENGTH_MIN_WORDS in app.py). Placeholders: {written}, {target} — both body-only, excluding the Summary and Terminology sections.",
       "tier": "safe",
-      "text": "The subsection is only about {written} words so far; the Length setting asks for at least {target}. Continue it by adding NEW sections at the end — a further angle, a concrete example with numbers, a failure-mode analysis, an opposing view, or a short case study. Do not repeat anything already written, do not re-open existing headings, and output only the new content."
+      "text": "The subsection is only about {written} words of body text so far; the Length setting asks for at least {target} not counting the Summary or Terminology sections. Continue it by adding NEW sections — before any closing Summary section if one already exists — covering a further angle, a concrete example with numbers, a failure-mode analysis, an opposing view, or a short case study. Do not repeat anything already written, do not re-open existing headings, and output only the new content."
     },
 
     "list.rules.output_only": {
@@ -245,9 +245,9 @@
     "content.defaults.summary": {
       "group": "Content",
       "label": "Content default — Summary section",
-      "help": "",
+      "help": "The summary does NOT count towards the Length setting's word target — the body has to reach that on its own, then the summary is added on top. Same for the Terminology section. The app also excludes both mechanically when checking the floor (_body_word_count in app.py).",
       "tier": "safe",
-      "text": "End with a brief \"Summary\" section recapping the key points."
+      "text": "End with a brief \"Summary\" section recapping the key points. The Summary and the Terminology section are extra: they do not count towards the requested length, so measure your length against the body only — write the body to the full target first, and only then add the Summary (and Terminology)."
     },
     "content.defaults.no_summary": {
       "group": "Content",
@@ -259,9 +259,9 @@
     "content.defaults.terminology": {
       "group": "Content",
       "label": "Content default — Terminology section",
-      "help": "",
+      "help": "Like the Summary, this is extra to the Length setting: its words are not part of the requested length (the app excludes it from the floor check too, via _body_word_count in app.py).",
       "tier": "safe",
-      "text": "End with a \"Terminology\" section (after the Summary, if there is one) listing and briefly defining the key terms introduced in this subsection."
+      "text": "End with a \"Terminology\" section (after the Summary, if there is one) listing and briefly defining the key terms introduced in this subsection. It is extra and does not count towards the requested length — the body alone must reach the target, then the Terminology is added on top."
     },
     "content.defaults.no_terminology": {
       "group": "Content",
@@ -338,21 +338,21 @@
       "label": "Length — Low",
       "help": "Word ranges beat adjectives: models calibrate differently without a number.",
       "tier": "safe",
-      "text": "Keep the body VERY brief — aim for roughly 200-350 words, two or three short paragraphs covering only the essential point, full stop. No extra subsections, no worked example, no deep dive — brevity wins over completeness here even if that means leaving nuance out."
+      "text": "Keep the body VERY brief — aim for roughly 200-350 words, two or three short paragraphs covering only the essential point, full stop. No extra subsections, no worked example, no deep dive — brevity wins over completeness here even if that means leaving nuance out. Word counts here are body-only: the Summary and Terminology sections are extra and do not count towards them."
     },
     "content.defaults.length.medium": {
       "group": "Content",
       "label": "Length — Medium",
       "help": "",
       "tier": "safe",
-      "text": "Aim for roughly 600-900 words: a focused subsection, not an exhaustive treatise."
+      "text": "Aim for roughly 600-900 words: a focused subsection, not an exhaustive treatise. The count is body-only — the Summary and Terminology sections are written on top of it."
     },
     "content.defaults.length.high": {
       "group": "Content",
       "label": "Length — High",
       "help": "Word floors are backed up mechanically in app.py (_LENGTH_MIN_WORDS + shared.length_extension), because a small model can ignore a word count entirely.",
       "tier": "safe",
-      "text": "Go deep — write at least 1,500 words (1,600-2,000 is the sweet spot) across at least five '##' subsections, and give each subsection 2-4 substantial paragraphs, not one paragraph under a heading. Cover the subject from several angles: what it is and the mechanism behind it, how to apply it step by step, a concrete example with numbers, failure modes and how they present, counter-arguments or alternatives, and where it pays off most. If you have covered the ground early, add another section with a new example or an opposing view instead of stopping. Add new substance, never padding."
+      "text": "Go deep — write at least 1,500 words (1,600-2,000 is the sweet spot) across at least five '##' subsections, and give each subsection 2-4 substantial paragraphs, not one paragraph under a heading. Cover the subject from several angles: what it is and the mechanism behind it, how to apply it step by step, a concrete example with numbers, failure modes and how they present, counter-arguments or alternatives, and where it pays off most. If you have covered the ground early, add another section with a new example or an opposing view instead of stopping. Add new substance, never padding. Every word count here is for the body only: reach it first, then write the Summary and Terminology sections on top."
     },
 
     "tone.technical": {

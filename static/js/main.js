@@ -409,7 +409,7 @@ themeBtn.addEventListener("click", () => {
   applyTheme(THEME_CYCLE[(THEME_CYCLE.indexOf(readTheme()) + 1) % THEME_CYCLE.length]);
 });
 
-// ---- import a book from .json ----------------------------------------
+// ---- import a book from a .zip bundle (or a plain .json) ----------------
 $("btn-import-book").addEventListener("click", () => $("import-file").click());
 $("import-file").addEventListener("change", async (e) => {
   const file = e.target.files[0];

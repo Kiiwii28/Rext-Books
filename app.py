@@ -7,13 +7,18 @@ Then open http://127.0.0.1:5000
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
 import re
+import secrets
 import subprocess
 import sys
 import threading
 import time
+import zipfile
+from io import BytesIO
 
 import requests
 from flask import (
@@ -33,6 +38,7 @@ import prompt_store
 import prompts
 import sparks
 import store
+from bundle import book_to_bundle, read_bundle, rebind_images
 from rendering import render_markdown
 
 app = Flask(__name__)
@@ -64,6 +70,13 @@ def _apply_key_bundle():
     their own bundle — and their own provider choice within it."""
     config.set_active_bundle(session.get("bundle"))
     config.set_request_provider(session.get("provider"))
+    # A stable per-browser id. Every book is stamped with it and only ever
+    # listed back to the same browser, so opening the hosted app on another
+    # device is a clean slate. It lives in the signed cookie, so it survives
+    # redeploys as long as the session signing key does.
+    if not session.get("owner"):
+        session["owner"] = secrets.token_hex(16)
+        session.permanent = True
 
 
 @app.teardown_request
@@ -206,6 +219,7 @@ def _unlock_record_failure() -> None:
 def api_settings_unlock():
     data = request.get_json(silent=True) or {}
     passcode = (data.get("passcode") or "").strip()
+    owner_before_unlock = session.get("owner")
     if not config.bundles_configured():
         return jsonify({"error": "No key bundles are configured on this server."}), 400
     if not _unlock_allowed():
@@ -216,6 +230,8 @@ def api_settings_unlock():
         return jsonify({"error": "That key isn't valid."}), 401
     session.clear()                     # fresh session; nothing from before is trusted
     session["bundle"] = bundle["id"]
+    # `session.clear()` must not orphan this browser's books.
+    session["owner"] = owner_before_unlock or secrets.token_hex(16)
     session.permanent = True
     # before_request already ran for this request, so pin the bundle here too —
     # otherwise the payload would report the state from *before* unlocking.
@@ -341,10 +357,38 @@ def api_spark_modes():
 # --------------------------------------------------------------------------- #
 #  Books CRUD                                                                  #
 # --------------------------------------------------------------------------- #
+#
+# Books are per-browser. Every book records the id of the browser that created
+# it, kept in the signed session cookie, and every route below only ever sees
+# books with that owner. Opening the hosted app on another device is therefore
+# a clean slate; the same browser gets its books back (and the vault restores
+# them if the server's disk was wiped).
+
+def _owner() -> str:
+    return session.get("owner") or ""
+
+
+def _preview_token(book_id: str) -> str:
+    """Proof that this server built a render URL for this book.
+
+    The PDF exporter loads ``/api/books/<id>/preview`` in headless Chrome,
+    which carries no session cookie — so an owner-only check there would 404
+    the export. The token is derived from the app secret and the book id, so
+    only the URL we just generated works, without exposing the book to anyone
+    who merely guesses an id.
+    """
+    return hmac.new(app.secret_key.encode(), f"{book_id}:{_owner()}".encode(),
+                    hashlib.sha256).hexdigest()[:32]
+
+
+def _preview_authorised(book_id: str) -> bool:
+    token = request.args.get("token") or ""
+    return bool(token) and hmac.compare_digest(token, _preview_token(book_id))
+
 
 @app.get("/api/books")
 def api_list_books():
-    return jsonify(store.list_books())
+    return jsonify(store.list_books(owner=_owner()))
 
 
 @app.post("/api/books")
@@ -354,27 +398,66 @@ def api_create_book():
     title = (data.get("title") or "").strip()
     if not topic and not title:
         return jsonify({"error": "topic is required"}), 400
-    return jsonify(store.create_book(topic=topic, title=title)), 201
+    return jsonify(store.create_book(topic=topic, title=title, owner=_owner())), 201
 
 
 @app.post("/api/books/import")
 def api_import_book():
+    """Import a book — either a plain JSON file (the old format, still
+    accepted) or a JSON+images bundle .zip, in which case its images are copied
+    into the new book's own asset folder so nothing comes back broken."""
     if "file" in request.files:
+        raw = request.files["file"].read()
+        if raw[:4] == b"PK\x03\x04":
+            return _import_bundle(raw)
         try:
-            data = json.loads(request.files["file"].read().decode("utf-8"))
+            data = json.loads(raw.decode("utf-8"))
         except (ValueError, UnicodeDecodeError):
             return jsonify({"error": "not valid JSON"}), 400
     else:
         data = request.get_json(silent=True)
     try:
-        return jsonify(store.import_book(data)), 201
+        return jsonify(store.import_book(data, owner=_owner())), 201
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 
 
+def _import_bundle(raw: bytes):
+    """Create a book from an exported JSON+images bundle.
+
+    The book is created first so it has an id to put images under, then the
+    images are written into ``books/assets/<new id>/`` and the bundle's
+    ``Images/<name>`` references re-pointed at that folder. A failure to write
+    an individual image is skipped rather than failing the whole import — a
+    book with one missing picture beats losing the book."""
+    try:
+        data, images = read_bundle(raw)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    try:
+        book = store.import_book(data, owner=_owner())
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    written: dict[str, bytes] = {}
+    folder = store.assets_dir(book["id"])
+    for name, blob in images.items():
+        safe = secure_filename(name)
+        if not safe:
+            continue
+        try:
+            (folder / safe).write_bytes(blob)
+        except OSError:
+            continue
+        written[name] = blob
+    if written:
+        book = store.save_book(book["id"], rebind_images(book, book["id"], written),
+                               owner=_owner())
+    return jsonify(book), 201
+
+
 @app.get("/api/books/<book_id>")
 def api_get_book(book_id: str):
-    book = store.get_book(book_id)
+    book = store.get_book(book_id, owner=_owner())
     if book is None:
         return jsonify({"error": "not found"}), 404
     return jsonify(book)
@@ -393,7 +476,7 @@ def api_restore_book():
     if not isinstance(data, dict):
         return jsonify({"error": "invalid body"}), 400
     try:
-        return jsonify(store.restore_book(data)), 201
+        return jsonify(store.restore_book(data, owner=_owner())), 201
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 
@@ -403,18 +486,20 @@ def api_save_book(book_id: str):
     if not isinstance(data, dict):
         return jsonify({"error": "invalid body"}), 400
     try:
-        return jsonify(store.save_book(book_id, data))
+        return jsonify(store.save_book(book_id, data, owner=_owner()))
     except KeyError:
         return jsonify({"error": "not found"}), 404
 
 
 @app.delete("/api/books/<book_id>")
 def api_delete_book(book_id: str):
-    return jsonify({"deleted": store.delete_book(book_id)})
+    return jsonify({"deleted": store.delete_book(book_id, owner=_owner())})
 
 
 @app.get("/api/books/<book_id>/versions")
 def api_book_versions(book_id: str):
+    if store.get_book(book_id, owner=_owner()) is None:
+        return jsonify({"error": "not found"}), 404
     try:
         return jsonify(store.list_versions(book_id))
     except ValueError:
@@ -424,6 +509,8 @@ def api_book_versions(book_id: str):
 @app.post("/api/books/<book_id>/restore")
 def api_restore_version(book_id: str):
     data = request.get_json(silent=True) or {}
+    if store.get_book(book_id, owner=_owner()) is None:
+        return jsonify({"error": "not found"}), 404
     try:
         return jsonify(store.restore_version(book_id, data.get("file", "")))
     except (KeyError, ValueError):
@@ -452,7 +539,7 @@ def api_image_search():
 
 @app.post("/api/books/<book_id>/images")
 def api_upload_image(book_id: str):
-    if store.get_book(book_id) is None:
+    if store.get_book(book_id, owner=_owner()) is None:
         return jsonify({"error": "book not found"}), 404
     try:
         if "image" in request.files:
@@ -527,22 +614,24 @@ def _parse_page_numbers() -> bool:
 
 @app.get("/api/books/<book_id>/export.json")
 def export_json(book_id: str):
-    book = store.get_book(book_id)
+    """The portable copy of a book: a .zip holding the book's own JSON plus an
+    ``Images/`` folder with every picture it references. Plain JSON alone lost
+    them — uploads live in ``books/assets/<id>/`` and remote ones at their
+    original URLs — so re-importing on another machine (or after a redeploy
+    wiped the disk) came back with broken images."""
+    book = store.get_book(book_id, owner=_owner())
     if book is None:
         return jsonify({"error": "not found"}), 404
-    exclude_ids = _parse_exclude()
-    if exclude_ids:
-        book = dict(book)
-        book["nodes"] = export.filter_book_nodes(book.get("nodes") or [], exclude_ids)
-    return Response(json.dumps(book, ensure_ascii=False, indent=2),
-                    mimetype="application/json; charset=utf-8", headers={
-        "Content-Disposition": f'attachment; filename="{_slug(book.get("title"))}.json"',
+    raw, _root = book_to_bundle(book, base_url=request.url_root,
+                                exclude_ids=_parse_exclude(), lite=_parse_lite())
+    return Response(raw, mimetype="application/zip", headers={
+        "Content-Disposition": f'attachment; filename="{_slug(book.get("title"))}.zip"',
     })
 
 
 @app.get("/api/books/<book_id>/export.md")
 def export_md(book_id: str):
-    book = store.get_book(book_id)
+    book = store.get_book(book_id, owner=_owner())
     if book is None:
         return jsonify({"error": "not found"}), 404
     md = export.book_to_markdown(book, base_url=request.url_root, exclude_ids=_parse_exclude())
@@ -553,7 +642,7 @@ def export_md(book_id: str):
 
 @app.get("/api/books/<book_id>/export.pdf")
 def export_pdf(book_id: str):
-    book = store.get_book(book_id)
+    book = store.get_book(book_id, owner=_owner())
     if book is None:
         return jsonify({"error": "not found"}), 404
     if not export.pdf_available():
@@ -561,7 +650,8 @@ def export_pdf(book_id: str):
     palette = request.args.get("palette") or (book.get("settings") or {}).get("palette")
     try:
         pdf = export.book_to_pdf(book, palette, base_url=request.url_root, exclude_ids=_parse_exclude(),
-                                 lite=_parse_lite(), page_numbers=_parse_page_numbers())
+                                 lite=_parse_lite(), page_numbers=_parse_page_numbers(),
+                                 token=_preview_token(book_id))
     except subprocess.TimeoutExpired:
         return jsonify({
             "error": "PDF export timed out (tried twice) — this book may be too large or "
@@ -577,7 +667,7 @@ def export_pdf(book_id: str):
 
 @app.get("/api/books/<book_id>/export.epub")
 def export_epub(book_id: str):
-    book = store.get_book(book_id)
+    book = store.get_book(book_id, owner=_owner())
     if book is None:
         return jsonify({"error": "not found"}), 404
     palette = request.args.get("palette") or (book.get("settings") or {}).get("palette")
@@ -599,7 +689,7 @@ def export_epub(book_id: str):
 
 @app.get("/api/books/<book_id>/export.pages")
 def export_pages(book_id: str):
-    book = store.get_book(book_id)
+    book = store.get_book(book_id, owner=_owner())
     if book is None:
         return jsonify({"error": "not found"}), 404
     try:
@@ -621,7 +711,11 @@ def export_pages(book_id: str):
 
 @app.get("/api/books/<book_id>/preview")
 def export_preview(book_id: str):
-    book = store.get_book(book_id)
+    # Chrome (during PDF export) sends no cookies, so it uses the signed token
+    # the exporter put in the URL instead. A signed-in browser just owns the
+    # book, and ``owner=None`` disables the check for that token-verified case.
+    by_token = _preview_authorised(book_id)
+    book = store.get_book(book_id, owner=None if by_token else _owner())
     if book is None:
         return jsonify({"error": "not found"}), 404
     palette = request.args.get("palette") or (book.get("settings") or {}).get("palette")
@@ -811,6 +905,35 @@ def _prose_word_count(text: str) -> int:
     return len(re.findall(r"[A-Za-z']+", body))
 
 
+# The closing recap blocks are additional to the Length setting, not part of it:
+# "600-900 words" means 600-900 words of substance plus a short Summary and
+# Terminology list on top. Only *trailing* recap headings count as that tail — a
+# sub-heading that merely starts with "Summary" mid-argument doesn't, and a body
+# that is nothing but a recap is left untouched rather than measuring zero.
+_HEADING_LINE = re.compile(r"^[ \t]{0,3}#{1,6}[ \t]*(.*)$", re.MULTILINE)
+_RECAP_TITLE = re.compile(
+    r"^[^A-Za-z0-9]*(?:summary|key takeaways|in summary|terminology|glossary|key terms)\b",
+    re.IGNORECASE,
+)
+
+
+def _body_word_count(text: str) -> int:
+    """Prose words in the *body* — the trailing Summary and Terminology
+    sections are excluded.
+
+    The Length setting describes how much substance to write; the recap and the
+    glossary at the end sit on top of that rather than counting towards it."""
+    body = text or ""
+    cut = None
+    for m in reversed(list(_HEADING_LINE.finditer(body))):
+        if not _RECAP_TITLE.match(m.group(1).strip()):
+            break
+        cut = m.start()
+    if cut is not None and cut > 0:
+        body = body[:cut]
+    return _prose_word_count(body)
+
+
 def _stream_chat_response(messages: list[dict], start_payload: dict,
                           *, resolve_images_book_id: str | None = None,
                           resolve_images_source: str = "auto",
@@ -871,7 +994,7 @@ def _stream_chat_response(messages: list[dict], start_payload: dict,
                     # for more than it produced, ask for the missing depth now —
                     # once — instead of saving a section that is half the length
                     # the user selected.
-                    written = _prose_word_count(text)
+                    written = _body_word_count(text)
                     if (min_words and extensions < MAX_LENGTH_EXTENSIONS
                             and written < min_words):
                         extensions += 1
@@ -1005,7 +1128,7 @@ def api_generate():
     if not user_prompt:
         return jsonify({"error": "prompt is required"}), 400
 
-    book = store.get_book(book_id) if book_id else None
+    book = store.get_book(book_id, owner=_owner()) if book_id else None
     if book is None:
         return jsonify({"error": "book not found"}), 404
 
@@ -1092,7 +1215,7 @@ def api_spark():
     if not user_prompt:
         return jsonify({"error": "prompt is required"}), 400
 
-    book = store.get_book(book_id) if book_id else None
+    book = store.get_book(book_id, owner=_owner()) if book_id else None
     if book is None:
         return jsonify({"error": "book not found"}), 404
 

@@ -149,6 +149,15 @@ Open <http://127.0.0.1:5000>.
   can't overflow a PDF page.
 - **Images in sections** — in the editor, **🖼 Image** → paste, drop, upload a file,
   or add a link. Files are stored under `books/assets/<bookId>/`.
+- **Books are private to your browser** — every book is stamped with an id kept in
+  your browser's signed cookie, and the API only ever lists/opens/deletes books
+  with that id. Opening the hosted app on another device is therefore a clean
+  slate; it never shows anyone else's books. Combined with the browser vault below,
+  the same browser gets its books back after a redeploy. Moving a book between
+  devices is a deliberate action: **Export → JSON + images** on one, **Import** on
+  the other (the `.zip` carries the pictures too).
+  (Books created before this existed have no owner and stay visible everywhere — on a
+  hosted instance the disk is wiped on each deploy, so none survive there.)
 - **Books survive a server wipe** — every book the browser has opened or edited is
   also mirrored in the browser itself (IndexedDB, `static/js/local-store.js`). Saves
   are written there *before* the network call, so an edit still lands if the save
@@ -179,11 +188,16 @@ Open <http://127.0.0.1:5000>.
   bundles configured); while unlocked, key fields it supplies are disabled because
   writing them would change the shared settings file. See the Render notes for the
   JSON shape and a passcode generator.
-- **Export** — **PDF** (15 palettes), **EPUB**, **Markdown**, or **JSON** (the raw
-  book file). **Content to include** in the Export dialog picks which parts of the
+- **Export** — **PDF** (15 palettes), **EPUB**, **Markdown**, or **JSON + images**
+  (a `.zip` holding the book's own JSON plus an `Images/` folder with every picture
+  it references, so a re-import keeps the pictures instead of showing broken
+  links). **Content to include** in the Export dialog picks which parts of the
   book actually go in the file — tick a heading and its whole subtree comes along,
   untick anything you don't want, same cascading-select as Extra Context; defaults
-  to everything. **Import** a `.json` book from the topbar. Every save also drops a
+  to everything. **Import** takes that `.zip` (or a plain `.json` book, the older
+  format) from the topbar; a bundle's images are copied into the new book's own
+  `books/assets/<new id>/` folder and its `Images/…` links rewritten to match, so
+  nothing comes back broken. Every save also drops a
   versioned snapshot in `books/.trash/` (auto-pruned to 8) so a bad edit can't lose
   work — `GET /api/books/<id>/versions`, `POST /api/books/<id>/restore {file}`.
 - **Author** — set in **⚙ Settings**; appears on the front page of PDF/EPUB exports
@@ -312,6 +326,7 @@ time there's no key configured at all.
 | `images.py` | Validate + store section images (magic-byte sniff, size caps) |
 | `palettes.py` | The 15 export colour palettes |
 | `export.py` | `book_to_markdown` / `book_to_html` / `book_to_pdf` (recursive, any depth) |
+| `bundle.py` | `book_to_bundle` — the JSON export's `.zip` (book JSON + `Images/`), and the unpack/rebind side the import route uses |
 | `epub.py` | `book_to_epub` — nav.xhtml + toc.ncx, embedded images, pre-rendered Mermaid SVG |
 | `pdfgen.py` | Renders a URL to PDF via a headless Chrome/Edge/Chromium; also dumps the post-JS DOM for EPUB |
 
@@ -331,7 +346,7 @@ Books are `books/<id>.json`. The browser owns the tree and PUTs the whole book
 | `js/mermaid-render.js` | lazy-loads mermaid.js, renders `pre.mermaid` blocks, themed + cached |
 | `js/tree.js` | recursive render, native drag-and-drop, edit lock |
 | `js/ai-dock.js` | right panel: target, tone/depth, Sub-topics/Content, Replace/Refine, context + Spark, streaming |
-| `js/export-panel.js` | export modal: PDF/MD/JSON + palette swatches |
+| `js/export-panel.js` | export modal: PDF/EPUB/MD/Pages/JSON-bundle + palette swatches |
 | `js/spark-panel.js` | Spark modal: two sources, ten modes, prompt, streaming, node insertion |
 | `js/main.js` | bootstrap, book switching, import |
 | `js/book-picker.js` | custom-styled book switcher (a native `<select>`'s dropdown can't be skinned) |
@@ -362,3 +377,9 @@ provocative" works, while "also write the next section too" is ignored. Image an
 diagram counts are bounded (≈8 / ≈6) so an over-broad request can't blow up.
 Editing the prompt still can't change which node type a mode creates — that's
 enforced in `app.py`, not the prompt. **Reset** restores the default text.
+
+The **Length** setting counts *body* words only: the closing **Summary** and
+**Terminology** sections are written on top of the target rather than being part
+of it, both in the prompt text and in the app's own under-length check
+(`_body_word_count` in `app.py`, which drops those trailing sections before
+counting), so a section can't reach its floor by padding the recap.

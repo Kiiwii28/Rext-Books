@@ -1,4 +1,4 @@
-// Export modal: choose format (PDF / EPUB / Markdown / JSON), a colour
+// Export modal: choose format (PDF / EPUB / Markdown / JSON + images), a colour
 // palette, and which parts of the book to actually include, then download.
 
 import * as store from "./store.js";
@@ -393,14 +393,16 @@ function markSelected() {
 
 function syncFormat() {
   els.paletteField.hidden = fmt !== "pdf" && fmt !== "epub";
-  // Author appears on the front page/byline of everything except the raw
-  // JSON dump (nothing to render there).
+  // Author appears on the front page/byline of everything except the JSON
+  // bundle (nothing to render there).
   els.authorField.hidden = fmt === "json";
   els.diagramsImagesField.hidden = fmt !== "pages";
   // Lite only actually compresses anything server-side for a native PDF
-  // render, an EPUB, or a Pages export — the no-native-renderer PDF
-  // fallback just opens the browser's own print dialog, nothing to shrink.
-  els.liteField.hidden = !(fmt === "epub" || fmt === "pages" || (fmt === "pdf" && pdfNative));
+  // render, an EPUB, a Pages export or a JSON bundle (which carries the
+  // images themselves) — the no-native-renderer PDF fallback just opens the
+  // browser's own print dialog, nothing to shrink.
+  els.liteField.hidden = !(fmt === "epub" || fmt === "pages" || fmt === "json"
+    || (fmt === "pdf" && pdfNative));
   els.pagesNumberField.hidden = fmt !== "pages";
   els.pageNumbersField.hidden = !(fmt === "pdf" && pdfNative);
   if (fmt === "pdf") {
@@ -417,7 +419,8 @@ function syncFormat() {
       + "Obsidian-style [[wikilinks]] between notes, and images in one shared assets/ folder. "
       + "Extract it straight into an Obsidian vault (or anywhere else that understands wikilinks).";
   } else if (fmt === "json") {
-    els.note.textContent = "The raw book file — re-import it with the Import button to restore this book.";
+    els.note.textContent = "A .zip holding the book's own JSON plus an Images/ folder with every picture "
+      + "it references — Import the .zip to restore the book with its images intact on any machine.";
   }
 }
 

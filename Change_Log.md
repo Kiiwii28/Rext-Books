@@ -9,6 +9,91 @@ From 2026-09-20 onward, entries are logged at the time each change is made.
 
 ---
 
+## 2026-11-17 (JSON export carries its images; Summary/Terminology don't count towards Length)
+
+**Two changes, both about a book's own words and pictures leaving and coming
+back intact.**
+
+1. **The Length target now means body-only.** Reported as: a "medium" section
+   could hit its word floor while much of that was the closing Summary.
+   - `prompts.defaults.json` — `content.defaults.summary` and the new
+     `content.defaults.terminology` text both say the recap/glossary are extra,
+     written *after* the body reaches the target; `content.defaults.length.low/
+     medium/high` and `shared.length_extension` say the same thing at the point
+     where the model is actually choosing a length.
+   - `app.py` — new `_body_word_count()` (plus `_HEADING_LINE` / `_RECAP_TITLE`)
+     strips a *trailing* run of recap headings (`summary`, `key takeaways`,
+     `in summary`, `terminology`, `glossary`, `key terms`) before calling
+     `_prose_word_count`, so the under-length check measures what the prompt
+     describes rather than something the recap can pad. A recap heading in the
+     middle of a section doesn't truncate anything, and a body that is *only* a
+     recap is left alone instead of measuring 0. The extension round now asks
+     for new sections *before* any existing closing Summary.
+   - Verified with a snippet against 8 shapes (body only, body+Summary,
+     body+Summary+Terminology, body+Terminology, mid-text "Summary of the
+     argument", trailing "Glossary", all-summary, recap then a bullet list):
+     the recap tail is excluded every time and mid-text headings still count.
+
+2. **JSON export is now a `.zip` that includes the images.**
+   - New module `bundle.py` (not `export.py`, which can't import `epub` at
+     module level without an import cycle): `book_to_bundle()` reuses the EPUB
+     path's `_AssetBag` (fetch/dedup/Lite-compress) and `pages._asset_prefix`,
+     rewrites each section's `![alt](src)` to `Images/<name>`, and zips
+     `<slug>/<slug>.json` + `<slug>/Images/*`. A single unfetchable image is left
+     as its original reference rather than failing the export.
+   - `/api/books/<id>/export.json` serves that zip (`application/zip`).
+   - `POST /api/books/import` detects the format by magic bytes (`PK\x03\x04`),
+     not the filename: `read_bundle()` takes the shallowest JSON that parses to
+     a real book plus the images in *its own folder* (ignoring `__MACOSX`, stray
+     top-level files, another bundle's folder), the book is created, each image
+     is written to `books/assets/<new id>/`, and `rebind_images()` points the
+     `Images/…` (and any legacy `/assets/<old id>/…`) references at the new id.
+     A plain `.json` upload still imports exactly as before.
+   - Frontend: the Export dialog's JSON tab reads **JSON + images** with a note
+     about the zip; **Lite** now applies to it too (images are recompressed);
+     the Import input accepts `.zip` as well as `.json`.
+   - Verified on an isolated server: export → zip members
+     `<title>/<title>.json` + `<title>/Images/<slug>-<id6>-img1.png`, owner
+     stripped from the payload; zip import returns 201, the image lands in the
+     *new* book's asset folder, the rewritten `/assets/<new id>/…` URL serves
+     200 `image/png`, excluded nodes stay pruned, a junk zip 400s, a hand-made
+     zip with nested folders + `__MACOSX` imports correctly, plain JSON still
+     imports, and another owner still gets 404. Also driven through the real
+     browser: Export dialog shows the new label/note, and importing a bundle
+     opens the book with the image rendering from `/assets/<new id>/…`.
+
+## 2026-11-17 (books are per-browser)
+
+**A book created on one device no longer appears on another.** Reported as:
+opening the Render site on a phone showed the books made on the desktop.
+
+- `app.py` — `before_request` creates a random 32-hex `session["owner"]` on the
+  first visit and keeps it in the signed cookie. `_owner()` feeds every book
+  route; `POST /api/settings/unlock` now re-sets it after `session.clear()`, so
+  unlocking a key bundle no longer orphans that browser's books.
+- `store.py` — books carry an `owner` field; `list_books`, `get_book`,
+  `save_book`, `delete_book`, `import_book` and `restore_book` all take an
+  optional `owner` (`None` = unfiltered). A book with no owner (created before
+  this change) stays visible to everyone: that keeps an existing local library
+  working and can't leak on a hosted instance, whose disk is wiped on every
+  deploy — every book created there is stamped.
+- Exports had to be handled: the PDF path loads
+  `/api/books/<id>/preview` in headless Chrome, which sends **no session
+  cookie**, so an owner-only check would have 404'd every PDF export.
+  `_preview_token()` (HMAC of book id + owner, keyed on `app.secret_key`) is
+  appended to the render URL by `export.book_to_pdf(token=...)`, and the preview
+  route accepts either that token or normal ownership.
+- Verified with two separate cookie jars and two real browser contexts:
+  A creates a book → A sees it after a reload, B (fresh browser, mobile size)
+  does not, and B's GET/PUT/DELETE on A's book return 404/false. A's **PDF
+  (11.9 KB, valid `%PDF`) and Pages exports still succeed** after the change;
+  B exporting A's book is 404. Simulated redeploy (deleted A's file): A's list
+  drops it, `POST /api/books/restore` re-creates it stamped with A's owner, and
+  B still cannot see it.
+- Consequence for the user: transferring a book between devices is now a
+  deliberate Export → JSON / Import. Documented in README, CLAUDE.md and the
+  Render notes.
+
 ## 2026-11-16 (night, CRITICAL: bundle keys not used when streaming)
 
 **A key bundle was correct in Settings but the generation used the machine's own
