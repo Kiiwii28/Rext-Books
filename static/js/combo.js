@@ -156,6 +156,13 @@ export function mountCombo(root, { onSelect = () => {} } = {}) {
       syncLabel();
       render();
     },
+    /** Grey the control out — used when a key bundle leaves exactly one legal
+     *  choice, where opening the list would offer nothing to decide. */
+    setDisabled(flag) {
+      els.btn.disabled = !!flag;
+      els.root.classList.toggle("is-disabled", !!flag);
+      if (flag) close();
+    },
     getValue: () => value,
   };
 }

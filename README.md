@@ -172,9 +172,15 @@ Open <http://127.0.0.1:5000>.
   scroll-snapping pair (Outline first, AI Assistant one swipe away) with a bottom
   tab bar, a floating **✨ AI for this block** shortcut once a block is selected,
   a collapsed tone/depth/context section so the prompt and Generate stay above the
-  fold, always-visible block tools, and ↑/↓ buttons for reordering (HTML5 drag
-  doesn't fire on touch). Above 900px nothing changes — every mobile rule lives in
-  the same media query, and the touch-only rules under `(hover: none)`.
+  fold, and ↑/↓ buttons for reordering (HTML5 drag doesn't fire on touch). The
+  topbar there is just the logo, **＋** (new book), 🎓 and **⋮** — Import, Export,
+  Delete, Settings and the light/dark toggle live in the ⋮ menu, and each item
+  clicks the same hidden button the desktop layout shows, so there is only one
+  implementation of each action. Outline rows give the title a full-width line of
+  its own with the block tools underneath, so a long heading or a deeply nested
+  one wraps normally instead of being squeezed into a one-letter-per-line column.
+  Above 900px nothing changes — every mobile rule lives in the same media query,
+  and the touch-only rules under `(hover: none)`.
 - **Key bundles ("master keys")** — one passcode fills in several provider keys at
   once, for someone who shouldn't be pasting a Gemini key, a DeepSeek key and a
   Pexels key separately. Bundles are configuration you own: `REXTBOOKS_KEY_BUNDLES`
@@ -186,8 +192,10 @@ Open <http://127.0.0.1:5000>.
   your browser rather than changing everyone else's. Enter it via the **🔑 icon
   beside the Settings title** (a small popover, shown only when the server has
   bundles configured); while unlocked, key fields it supplies are disabled because
-  writing them would change the shared settings file. See the Render notes for the
-  JSON shape and a passcode generator.
+  writing them would change the shared settings file. A bundle can also **limit
+  which models its user may pick** (`"models": [...]`, or `"model": "…"` for
+  exactly one): Settings then offers only those models and the server refuses
+  anything else. See the Render notes for the JSON shape and a passcode generator.
 - **Export** — **PDF** (15 palettes), **EPUB**, **Markdown**, or **JSON + images**
   (a `.zip` holding the book's own JSON plus an `Images/` folder with every picture
   it references, so a re-import keeps the pictures instead of showing broken

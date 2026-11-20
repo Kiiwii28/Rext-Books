@@ -70,6 +70,7 @@ def _apply_key_bundle():
     their own bundle — and their own provider choice within it."""
     config.set_active_bundle(session.get("bundle"))
     config.set_request_provider(session.get("provider"))
+    config.set_request_models(session.get("models"))
     # A stable per-browser id. Every book is stamped with it and only ever
     # listed back to the same browser, so opening the hosted app on another
     # device is a clean slate. It lives in the signed cookie, so it survives
@@ -123,6 +124,10 @@ def _settings_payload() -> dict:
         "model": active["model"],
         "defaultModel": active["defaultModel"],
         "models": active["models"],
+        # Empty list = no restriction; otherwise a key bundle named the models
+        # this user may pick, and the dialog shows only those.
+        "allowedModels": active["allowedModels"],
+        "modelLocked": active["modelLocked"],
         "contextChars": active["contextChars"],
         "providers": config.llm_providers(),
         # Credential state for the active provider only (never the key itself).
@@ -168,6 +173,10 @@ def api_save_settings():
         target = data.get("provider") or config.get_llm_provider()
         if "model" in data:
             config.set_llm_model(data.get("model") or "", provider=target)
+            # Same reasoning as the provider above: inside a bundle the model
+            # choice belongs to this browser's session, not the shared file.
+            if config.get_active_bundle() is not None:
+                session["models"] = config.request_models()
         if "apiKey" in data:
             config.set_api_key(data.get("apiKey") or "", provider=target)
     except (ValueError, RuntimeError) as exc:
@@ -243,6 +252,7 @@ def api_settings_unlock():
 def api_settings_lock():
     session.pop("bundle", None)
     session.pop("provider", None)   # back to this machine's own provider choice
+    session.pop("models", None)     # ...and its own model choices
     config.clear_active_bundle()
     return jsonify(_settings_payload())
 
@@ -959,6 +969,7 @@ def _stream_chat_response(messages: list[dict], start_payload: dict,
     # while the request is still alive and restore them for the whole stream.
     bundle_id = session.get("bundle")
     provider_pref = session.get("provider")
+    models_pref = session.get("models")
 
     def _generate_body():
         yield _sse("start", {**start_payload, "provider": profile["provider"],
@@ -1094,6 +1105,7 @@ def _stream_chat_response(messages: list[dict], start_payload: dict,
     def generate():
         config.set_active_bundle(bundle_id)
         config.set_request_provider(provider_pref)
+        config.set_request_models(models_pref)
         try:
             yield from _generate_body()
         finally:

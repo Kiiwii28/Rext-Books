@@ -197,7 +197,9 @@ PDF_RENDER_TIMEOUT = int(os.getenv("REXTBOOKS_PDF_TIMEOUT", "300"))
 #     "rk-mum-8f3a91c2d5e64b70a1c9": {
 #       "label": "Mum",
 #       "provider": "gemini",              # optional; inferred from the keys
-#       "model": "gemini-3.5-flash-lite",  # optional
+#       "model": "gemini-3.5-flash-lite",  # optional — pins exactly one model
+#       "models": ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"],
+#                                          # optional — the models that user may pick
 #       "keys": {
 #         "gemini": "AIza…",
 #         "deepseek": "sk-…",
@@ -207,6 +209,12 @@ PDF_RENDER_TIMEOUT = int(os.getenv("REXTBOOKS_PDF_TIMEOUT", "300"))
 #   }
 #
 # (``{"label": …, "gemini": "…"}`` with the keys at the top level also works.)
+#
+# ``models`` turns a bundle into a *plan*: a key restricted to the cheaper
+# models, say. It applies to the bundle's own provider, or can be spelled
+# ``{"gemini": [...], "deepseek": [...]}`` to differ per provider. Anything not
+# in that list is refused by the server, not merely hidden in the UI; ``model``
+# is the stricter shortcut for "this one model, no choice at all".
 #
 # A passcode is a *credential*: anyone holding it spends the keys inside it.
 # Use a long random one (the README shows a one-liner to generate them), never
@@ -234,8 +242,40 @@ def _bundle_id(passcode: str) -> str:
     return hashlib.sha256(("rextbooks:" + passcode).encode("utf-8")).hexdigest()[:16]
 
 
+def _clean_model_list(value: object) -> list[str]:
+    """A de-duplicated list of non-empty model names (order preserved)."""
+    if not isinstance(value, list):
+        return []
+    out: list[str] = []
+    for item in value:
+        name = _clean(item)
+        if name and name not in out:
+            out.append(name)
+    return out[:20]
+
+
+def _parse_allowed_models(raw: object, provider: str) -> dict[str, list[str]]:
+    """``"models"`` in a bundle entry: which models its users may pick.
+
+    Either a plain list (meaning the bundle's own provider) or a mapping of
+    provider → list. An empty result means "no restriction": the user picks any
+    model, exactly as before this existed."""
+    if isinstance(raw, dict):
+        out: dict[str, list[str]] = {}
+        for name, value in raw.items():
+            key = _clean(name).lower()
+            key = _PROVIDER_ALIASES.get(key, key)
+            models = _clean_model_list(value)
+            if key in PROVIDERS and models:
+                out[key] = models
+        return out
+    models = _clean_model_list(raw)
+    return {provider: models} if models else {}
+
+
 def _parse_bundles(raw: object) -> dict[str, dict]:
-    """Normalise the configured JSON into ``{id: {id, label, provider, model, keys}}``.
+    """Normalise the configured JSON into
+    ``{id: {id, label, provider, model, models, keys}}``.
 
     Anything malformed is skipped rather than raising — a typo in an env var
     must not stop the app booting for someone who isn't using bundles at all."""
@@ -261,11 +301,18 @@ def _parse_bundles(raw: object) -> dict[str, dict]:
         provider = _PROVIDER_ALIASES.get(provider, provider)
         if provider not in PROVIDERS:
             provider = next((p for p in _BUNDLE_LLM_KEYS if keys.get(p)), DEFAULT_PROVIDER)
+        allowed = _parse_allowed_models(entry.get("models"), provider)
+        model = _clean(entry.get("model"))
+        if model and provider not in allowed:
+            # A pinned model is simply a one-item allow-list, so both spellings
+            # go through the same checks further down.
+            allowed[provider] = [model]
         out[_bundle_id(passcode)] = {
             "id": _bundle_id(passcode),
             "label": _clean(entry.get("label")) or "Key bundle",
             "provider": provider,
-            "model": _clean(entry.get("model")),
+            "model": model,
+            "models": allowed,
             "keys": keys,
         }
     return out
@@ -329,6 +376,7 @@ def set_active_bundle(bundle_id: str | None) -> None:
     reads the user's session). Unknown or absent id = no bundle."""
     _ctx.bundle = bundle_id if bundle_id in _bundles() else None
     _ctx.provider = None
+    _ctx.models = None
 
 
 def set_request_provider(provider: str | None) -> None:
@@ -338,6 +386,32 @@ def set_request_provider(provider: str | None) -> None:
     sharing a bundle on one instance must be able to use different providers at
     the same time without overwriting each other."""
     _ctx.provider = _clean(provider).lower() or None
+
+
+def set_request_models(models: object) -> None:
+    """The models this request's user has picked *within* their bundle, as
+    ``{provider: model}``. Session state for the same reason as the provider:
+    one browser's model choice never rewrites the shared settings file."""
+    if isinstance(models, dict):
+        clean = {str(k): _clean(v) for k, v in models.items() if _clean(v)}
+        _ctx.models = clean or None
+    else:
+        _ctx.models = None
+
+
+def request_models() -> dict[str, str]:
+    """The per-session model choices, for ``app.py`` to persist in the cookie."""
+    return dict(getattr(_ctx, "models", None) or {})
+
+
+def bundle_allowed_models(provider: str | None = None) -> list[str]:
+    """The models the unlocked bundle permits for ``provider`` — empty when the
+    bundle places no limit at all."""
+    bundle = get_active_bundle()
+    if bundle is None:
+        return []
+    name = _normalize(provider or get_llm_provider())
+    return list(bundle["models"].get(name) or [])
 
 
 def bundle_providers() -> list[str]:
@@ -356,6 +430,7 @@ def get_active_bundle() -> dict | None:
 def clear_active_bundle() -> None:
     _ctx.bundle = None
     _ctx.provider = None
+    _ctx.models = None
 
 
 def key_bundle_info() -> dict:
@@ -363,7 +438,8 @@ def key_bundle_info() -> dict:
     are covered, never a key or a passcode."""
     bundle = get_active_bundle()
     if bundle is None:
-        return {"configured": bool(_bundles()), "unlocked": False, "providers": []}
+        return {"configured": bool(_bundles()), "unlocked": False, "providers": [],
+                "models": {}}
     available = bundle_providers()
     return {
         "configured": True,
@@ -375,6 +451,9 @@ def key_bundle_info() -> dict:
         "availableProviders": available,
         "provider": get_llm_provider(),
         "model": bundle["model"],
+        # provider -> the models this bundle permits (absent/empty = unrestricted).
+        # The Settings dialog shows only these instead of the full preset list.
+        "models": {p: list(m) for p, m in bundle["models"].items()},
         # The pinned model belongs to the bundle's default provider, so the UI
         # can stay quiet about it once the user has switched to another one.
         "modelProvider": bundle["provider"] if bundle["model"] else "",
@@ -490,14 +569,29 @@ def set_llm_provider(name: str) -> str:
 
 
 def get_llm_model(provider: str | None = None) -> str:
-    """The model for ``provider`` (default: the active one). A model saved in
-    Settings wins, then the provider's own env var, then a generic
-    ``LLM_MODEL`` for the active provider only, then the preset default."""
+    """The model for ``provider`` (default: the active one).
+
+    An unlocked key bundle that lists models is a hard limit, not a default: the
+    user's choice (kept in their session) if it's on the list, otherwise the
+    bundle's pinned model, otherwise the first allowed one. Without such a list
+    it falls back to: session choice, pinned model, saved setting, the
+    provider's own env var, a generic ``LLM_MODEL``, then the preset default."""
     name = _normalize(provider or get_llm_provider())
     preset = _preset(name)
     bundle = get_active_bundle()
-    if bundle is not None and bundle["model"] and name == bundle["provider"]:
-        return bundle["model"]
+    if bundle is not None:
+        chosen = (getattr(_ctx, "models", None) or {}).get(name)
+        allowed = bundle["models"].get(name) or []
+        if allowed:
+            if chosen in allowed:
+                return chosen
+            if bundle["model"] and name == bundle["provider"]:
+                return bundle["model"]
+            return allowed[0]
+        if bundle["model"] and name == bundle["provider"]:
+            return bundle["model"]
+        if chosen:
+            return chosen
     saved = _clean((_settings_snapshot().get("llmModels") or {}).get(name))
     if saved:
         return saved
@@ -514,17 +608,38 @@ def get_llm_model(provider: str | None = None) -> str:
 
 
 def set_llm_model(model: str, provider: str | None = None) -> None:
-    """Save the model for one provider; an empty string (or the preset
-    default) clears the override so the default applies again."""
+    """Choose the model for one provider; an empty string clears the choice so
+    the default applies again.
+
+    Inside a key bundle the choice is stored in this browser's session (never in
+    the shared settings file), and a bundle that restricts models only accepts
+    one of them — the check is here, so it holds even if the UI is bypassed."""
     name = _normalize(provider or get_llm_provider())
     preset = _preset(name)
     model = _clean(model)
     bundle = get_active_bundle()
-    if bundle is not None and bundle["model"] and name == bundle["provider"]:
-        raise RuntimeError(
-            f"The unlocked key bundle ({bundle['label']}) fixes this model — "
-            "lock it first to choose a different one."
-        )
+    if bundle is not None:
+        allowed = bundle["models"].get(name) or []
+        if allowed:
+            if not model:
+                model = allowed[0]
+            if model not in allowed:
+                raise RuntimeError(
+                    f"The unlocked key bundle ({bundle['label']}) is limited to: "
+                    f"{', '.join(allowed)}."
+                )
+        elif bundle["model"] and name == bundle["provider"]:
+            raise RuntimeError(
+                f"The unlocked key bundle ({bundle['label']}) fixes this model — "
+                "lock it first to choose a different one."
+            )
+        models = dict(getattr(_ctx, "models", None) or {})
+        if model:
+            models[name] = model
+        else:
+            models.pop(name, None)
+        _ctx.models = models or None
+        return
     with _lock:
         data = _read_settings()
         models = dict(data.get("llmModels") or {})
@@ -689,12 +804,17 @@ def llm_profile(provider: str | None = None) -> dict:
 def llm_status(provider: str | None = None) -> dict:
     name = _normalize(provider or get_llm_provider())
     preset = _preset(name)
+    allowed = bundle_allowed_models(name)
     return {
         "provider": name,
         "label": preset["label"],
         "model": get_llm_model(name),
         "defaultModel": preset["default_model"],
-        "models": list(preset["models"]),
+        # A key bundle that names its models replaces the preset list entirely,
+        # so the Settings dialog can't offer anything the server would refuse.
+        "models": allowed or list(preset["models"]),
+        "allowedModels": allowed,          # [] = no restriction
+        "modelLocked": len(allowed) == 1,  # only one choice: nothing to pick
         "contextChars": get_context_char_budget(name),
         "hasApiKey": bool(get_api_key(name)),
         "keySource": api_key_source(name),

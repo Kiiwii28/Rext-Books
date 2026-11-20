@@ -9,6 +9,7 @@ import { mountExport } from "./export-panel.js";
 import { mountSpark, updateSpark } from "./spark-panel.js";
 import { mountPaneResizer } from "./resize.js";
 import { mountMobileView, updateMobileSelection, showMobileView } from "./mobile-view.js";
+import { mountMobileMenu } from "./mobile-menu.js";
 import { mountSettings, openIfNoKey } from "./settings-panel.js";
 import { mountPromptsPanel } from "./prompts-panel.js";
 import { mountTour } from "./tour.js";
@@ -359,6 +360,10 @@ els.newBtn.addEventListener("click", () => {
   els.startTopic.focus();
 });
 
+// Same action, ＋-shaped, for the mobile topbar (the labelled button is
+// hidden there — see the max-width: 900px block in style.css).
+$("btn-new-book-m").addEventListener("click", () => els.newBtn.click());
+
 els.deleteBtn.addEventListener("click", async () => {
   const book = store.getBook();
   if (!book || !confirm(`Delete "${book.title}"? This cannot be undone.`)) return;
@@ -407,6 +412,19 @@ function applyTheme(t) {
 applyTheme(readTheme());
 themeBtn.addEventListener("click", () => {
   applyTheme(THEME_CYCLE[(THEME_CYCLE.indexOf(readTheme()) + 1) % THEME_CYCLE.length]);
+});
+
+// The mobile ⋮ menu: Import / Export / Delete / Settings / theme all live there
+// on a phone. Mounted here rather than at the top so it can read the theme
+// state above, and its items simply click the buttons those handlers belong to.
+mountMobileMenu({
+  button: $("btn-more"),
+  menu: $("mobile-menu"),
+  themeState: $("mobile-menu-theme-state"),
+  themeLabel: () => {
+    const t = readTheme();
+    return t === "auto" ? "Auto" : t === "light" ? "Light" : "Dark";
+  },
 });
 
 // ---- import a book from a .zip bundle (or a plain .json) ----------------

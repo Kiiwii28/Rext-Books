@@ -163,29 +163,41 @@ function applyLlmState(s) {
   const info = providers.find((p) => p.provider === s.provider) || null;
   const label = s.providerLabel || (info ? info.label : "") || "this provider";
 
+  // A key bundle may name the models this user is allowed to use (e.g. a
+  // Gemini-only key limited to the cheap models). Read before the list is
+  // built: when it applies, the preset list — and "Custom model…" — must not
+  // be offered at all, because the server refuses anything else.
+  const bundle = s.keyBundle || { configured: false, unlocked: false };
+  const allowed = (bundle.unlocked && bundle.models && bundle.models[s.provider]) || [];
+
   els.modelInput.value = s.model || "";
-  const known = [
-    { value: "", label: s.defaultModel ? `${s.defaultModel} (default)` : "Provider default" },
-    ...(s.models || [])
-      .filter((m) => m !== s.defaultModel)
-      .map((m) => ({ value: m, label: m })),
-    { value: CUSTOM, label: "Custom model…" },
-  ];
+  const known = allowed.length
+    ? allowed.map((m) => ({ value: m, label: m }))
+    : [
+        { value: "", label: s.defaultModel ? `${s.defaultModel} (default)` : "Provider default" },
+        ...(s.models || [])
+          .filter((m) => m !== s.defaultModel)
+          .map((m) => ({ value: m, label: m })),
+        { value: CUSTOM, label: "Custom model…" },
+      ];
   modelCombo.setItems(known);
   modelCombo.setValue(s.model || "");
+  modelCombo.setDisabled(allowed.length === 1);
   // A saved name that isn't one of the presets (or a half-typed one) needs the
   // text input visible; a preset, including "default", doesn't.
-  els.modelInput.hidden = known.some((k) => k.value === (s.model || ""));
-  els.modelNote.textContent = info
-    ? `${info.label} default: ${info.defaultModel}. Choose a model from the list, ` +
-      `or pick "Custom model…" to type any name ${info.label} accepts.`
-    : "";
+  els.modelInput.hidden = allowed.length > 0 || known.some((k) => k.value === (s.model || ""));
+  els.modelNote.textContent = allowed.length
+    ? `The "${bundle.label}" key bundle is limited to `
+      + `${allowed.length === 1 ? "one model" : `${allowed.length} models`}: ${allowed.join(", ")}.`
+    : info
+      ? `${info.label} default: ${info.defaultModel}. Choose a model from the list, ` +
+        `or pick "Custom model…" to type any name ${info.label} accepts.`
+      : "";
 
   // A key bundle ("master key") supplies keys for this browser session only.
   // Any provider the bundle holds a key for stays selectable — switching is
   // stored in this browser's session, not in the shared settings file — while
   // a provider it has no key for is greyed out rather than silently failing.
-  const bundle = s.keyBundle || { configured: false, unlocked: false };
   const managed = bundle.unlocked ? (bundle.providers || []) : [];
   const available = bundle.unlocked ? (bundle.availableProviders || []) : null;
   els.providerSelect.disabled = false;
@@ -279,10 +291,16 @@ function paintKeyBundle(bundle) {
     els.bundleLabel.textContent = bundle.label || "Key bundle";
     const which = (bundle.providers || []).join(", ") || "none";
     const switchable = (bundle.availableProviders || []).length > 1;
-    const modelApplies = !!bundle.model && bundle.modelProvider === bundle.provider;
+    // A bundle can pin one model or allow a short list of them; say so here so
+    // the restricted model dropdown above has a visible reason.
+    const lists = Object.entries(bundle.models || {}).filter(([, v]) => v && v.length);
+    const limit = lists.length === 1 && lists[0][1].length === 1
+      ? `, model fixed to ${lists[0][1][0]}`
+      : lists.length
+        ? `, models limited to ${lists.map(([p, v]) => `${p}: ${v.join(", ")}`).join("; ")}`
+        : "";
     els.bundleNote.textContent =
-      `Unlocks ${which} for this browser` +
-      (modelApplies ? `, model fixed to ${bundle.model}` : "") +
+      `Unlocks ${which} for this browser` + limit +
       (switchable ? ". You can switch between the providers it holds keys for." : ".");
   }
 }

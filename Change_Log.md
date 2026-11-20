@@ -9,6 +9,60 @@ From 2026-09-20 onward, entries are logged at the time each change is made.
 
 ---
 
+## 2026-11-20 (mobile outline layout + ⋮ topbar menu; key bundles can restrict models)
+
+**1. Mobile: outline rows and the topbar.** Reported with a phone screenshot of
+the Render site: a heading rendered as one letter per line, and the topbar
+wrapped "New book / Import / Export / Delete / ⚙ / ◑" into a crowded stack.
+
+- Cause of the vertical text: `.block-row` is a single flex line. On touch the
+  tool buttons are forced visible at 38px each (seven of them), so the buttons
+  plus the kind label and drag handle consumed the whole row and `.b-title`
+  shrank to roughly one character wide. `overflow-wrap: anywhere` then did
+  exactly what it says.
+- Fix (`static/css/style.css`, inside the existing `max-width: 900px` block):
+  `.block-row` is a 3-column grid — chevron, then a title line and a tools line
+  — so the title always gets the full row width regardless of its length or
+  nesting depth; the drag handle and the "HEADING" label are hidden there (drag
+  doesn't fire on touch anyway, and ↑/↓ buttons exist); child indentation was
+  reduced from 32px to 18px per level; `.b-section-body` lost its 30px left
+  margin. Verified at 390x844: titles 261–299px wide, long headings wrap to two
+  lines, no horizontal overflow — and at 1280px the rows are still the original
+  single flex line with hover tools.
+- Topbar (`templates/index.html` + `static/js/mobile-menu.js`, new): below 900px
+  the labelled buttons are hidden and the row is just the logo, **＋** (new
+  book), 🎓 and **⋮**. The ⋮ panel holds Import, Export, Delete book, Settings
+  and Light/dark mode (with the current Auto/Light/Dark state beside it); each
+  item clicks the same hidden desktop button, so there is exactly one
+  implementation of each action. Closes on outside click, Escape, or crossing
+  back above 900px. New book's ＋ clicks the same handler as the labelled one.
+- `combo.js` gained `setDisabled()` for the model picker below.
+
+**2. Key bundles can now restrict which models a user may pick.** Asked for a
+third bundle holding only a Gemini key, limited to certain models.
+
+- `config.py`: new optional `"models"` per bundle — a list (applies to that
+  bundle's provider) or a `{provider: [...]}` mapping. `"model": "…"` still
+  works and is treated as a one-item list. Parsed by `_parse_allowed_models`
+  into `bundle["models"]`; `bundle_allowed_models()` exposes it.
+- Enforcement is server-side: `get_llm_model` clamps to the list (session
+  choice → pinned → first allowed) and `set_llm_model` raises `RuntimeError` for
+  anything else, which `api_save_settings` returns as a 400. A request that
+  bypasses the UI is refused just the same.
+- The model choice is now **per session** for every bundle (like the provider
+  choice): `session["models"]`, applied by `config.set_request_models` in
+  `before_request`, re-applied inside `_stream_chat_response`'s generator (same
+  reason as the provider — teardown clears the thread-local), and cleared by
+  `api_settings_lock`. Verified: two browsers on one bundle hold different
+  models, `local_settings.json` stays byte-identical, and an SSE generation's
+  first event reports the restricted model.
+- Settings UI: when a bundle names models, the dropdown offers only those (no
+  "Custom model…", text input hidden), a one-model bundle disables the control
+  and shows what's in use, and both the model note and the 🔑 popover say why.
+  Without `models`/`model` everything behaves exactly as before.
+- `experiments/render/README.md` documents the JSON shape with a worked
+  "Lite plan" bundle; README and CLAUDE.md updated for both changes.
+
 ## 2026-11-17 (Render deploy failed: `No module named 'bundle'`)
 
 Deploy exited with status 3, `gunicorn` worker failing to boot at

@@ -41,9 +41,37 @@
       <button id="btn-tutorial" class="mini-btn" title="Tutorial" aria-label="Start the tutorial">🎓</button>
       <button id="btn-settings" class="mini-btn" title="Settings" aria-label="Settings">⚙</button>
       <button id="btn-theme" class="mini-btn" title="Theme" aria-label="Toggle light / dark theme"></button>
+      <!-- Mobile only (hidden above 900px). The labelled buttons above wrap into
+           a crowded stack on a phone, so there New book becomes ＋ and the rest
+           move into the ⋮ menu just below. -->
+      <button id="btn-new-book-m" class="mini-btn topbar-mobile" title="New book" aria-label="New book">＋</button>
+      <button id="btn-more" class="mini-btn topbar-mobile" title="More actions" aria-label="More actions"
+              aria-haspopup="menu" aria-expanded="false">⋮</button>
       <span id="save-state" class="save-state" aria-live="polite">Saved</span>
     </div>
   </header>
+
+  <!-- Opened by ⋮ on mobile only. Each item clicks the corresponding hidden
+       desktop button, so every action keeps a single implementation. -->
+  <div id="mobile-menu" class="mobile-menu" role="menu" aria-label="Actions" hidden>
+    <button type="button" class="mobile-menu-item" role="menuitem" data-action="import">
+      <span class="mobile-menu-icon" aria-hidden="true">📥</span><span>Import</span>
+    </button>
+    <button type="button" class="mobile-menu-item" role="menuitem" data-action="export">
+      <span class="mobile-menu-icon" aria-hidden="true">📤</span><span>Export</span>
+    </button>
+    <button type="button" class="mobile-menu-item" role="menuitem" data-action="delete">
+      <span class="mobile-menu-icon" aria-hidden="true">🗑</span><span>Delete book</span>
+    </button>
+    <div class="mobile-menu-sep" role="separator"></div>
+    <button type="button" class="mobile-menu-item" role="menuitem" data-action="settings">
+      <span class="mobile-menu-icon" aria-hidden="true">⚙</span><span>Settings</span>
+    </button>
+    <button type="button" class="mobile-menu-item" role="menuitem" data-action="theme">
+      <span class="mobile-menu-icon" aria-hidden="true">◑</span><span>Light / dark mode</span>
+      <span class="mobile-menu-state" id="mobile-menu-theme-state"></span>
+    </button>
+  </div>
 
   <main class="workspace">
     <section class="pane tree-pane glass" aria-label="Textbook outline">
