@@ -106,7 +106,7 @@ whose top-level keys are the passcodes people type:
   "rk-lite-9c4e1d7a3b5062fd8e21c4a6b8d0": {
     "label": "Lite plan",
     "keys": { "gemini": "AIza…" },
-    "models": ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]
+    "excludeModels": ["gemini-3.8-flash", "gemini-3.6-flash"]
   }
 }
 ```
@@ -128,14 +128,18 @@ How it behaves:
 - While unlocked, the bundle supplies the provider, the keys (and the model if
   the bundle sets one); those controls are disabled in Settings, because
   writing them would change the shared settings file.
-- **Restricting the models a plan may use.** Add `"models": [...]` to a bundle
-  and that becomes a hard limit: Settings lists only those models (no "Custom
-  model…"), and the server refuses anything else even if the API is called
-  directly. `"model": "…"` is the strict version — one model, no choice — and
-  `"models": {"gemini": [...], "deepseek": [...]}` sets a different list per
-  provider. Without either, the user picks any model, as before. Each browser's
-  model choice is kept in its own session, so two people on one bundle don't
-  overwrite each other (and nothing is written to `local_settings.json`).
+- **Restricting the models a plan may use.** Every model field is optional —
+  leave them all out and the user may pick any model, which is the default.
+  When you do want a limit, the usual spelling names what is **not** allowed:
+  `"excludeModels": ["gemini-3.8-flash"]` (everything except those, measured
+  against the provider's own model list). The inverse also works —
+  `"models": [...]` lists the *only* allowed models — and `"model": "…"` pins
+  exactly one, with no choice at all. All three accept a
+  `{"gemini": [...], "deepseek": [...]}` mapping to differ per provider. A model
+  that isn't allowed is refused by the server even if the API is called
+  directly, Settings lists only the ones that survive, and each browser's model
+  choice is kept in its own session (nothing is written to
+  `local_settings.json`).
 - Unlock attempts are rate-limited (10 per 5 minutes per IP), comparisons are
   constant-time, and nothing about the passcode is logged or written to disk.
 - Removing a bundle from the env var revokes it immediately.

@@ -163,12 +163,15 @@ function applyLlmState(s) {
   const info = providers.find((p) => p.provider === s.provider) || null;
   const label = s.providerLabel || (info ? info.label : "") || "this provider";
 
-  // A key bundle may name the models this user is allowed to use (e.g. a
-  // Gemini-only key limited to the cheap models). Read before the list is
-  // built: when it applies, the preset list — and "Custom model…" — must not
-  // be offered at all, because the server refuses anything else.
+  // A key bundle may restrict which models this user can use — either by naming
+  // the ones that are allowed ("models") or the ones that are not
+  // ("excludeModels"). Read before the list is built: when a restriction
+  // applies, the preset list — and "Custom model…" — must not be offered at
+  // all, because the server refuses anything else. `allowed` is the server's
+  // effective list, so both spellings arrive here the same way.
   const bundle = s.keyBundle || { configured: false, unlocked: false };
   const allowed = (bundle.unlocked && bundle.models && bundle.models[s.provider]) || [];
+  const excluded = (bundle.unlocked && bundle.excludeModels && bundle.excludeModels[s.provider]) || [];
 
   els.modelInput.value = s.model || "";
   const known = allowed.length
@@ -187,8 +190,11 @@ function applyLlmState(s) {
   // text input visible; a preset, including "default", doesn't.
   els.modelInput.hidden = allowed.length > 0 || known.some((k) => k.value === (s.model || ""));
   els.modelNote.textContent = allowed.length
-    ? `The "${bundle.label}" key bundle is limited to `
-      + `${allowed.length === 1 ? "one model" : `${allowed.length} models`}: ${allowed.join(", ")}.`
+    ? excluded.length
+      ? `The "${bundle.label}" key bundle disallows ${excluded.join(", ")} — `
+        + `you can use ${allowed.join(", ")}.`
+      : `The "${bundle.label}" key bundle is limited to `
+        + `${allowed.length === 1 ? "one model" : `${allowed.length} models`}: ${allowed.join(", ")}.`
     : info
       ? `${info.label} default: ${info.defaultModel}. Choose a model from the list, ` +
         `or pick "Custom model…" to type any name ${info.label} accepts.`
@@ -291,14 +297,17 @@ function paintKeyBundle(bundle) {
     els.bundleLabel.textContent = bundle.label || "Key bundle";
     const which = (bundle.providers || []).join(", ") || "none";
     const switchable = (bundle.availableProviders || []).length > 1;
-    // A bundle can pin one model or allow a short list of them; say so here so
-    // the restricted model dropdown above has a visible reason.
+    // A bundle can pin one model, allow a short list, or just exclude some;
+    // say so here so the restricted model dropdown above has a visible reason.
     const lists = Object.entries(bundle.models || {}).filter(([, v]) => v && v.length);
-    const limit = lists.length === 1 && lists[0][1].length === 1
-      ? `, model fixed to ${lists[0][1][0]}`
-      : lists.length
-        ? `, models limited to ${lists.map(([p, v]) => `${p}: ${v.join(", ")}`).join("; ")}`
-        : "";
+    const denied = Object.entries(bundle.excludeModels || {}).filter(([, v]) => v && v.length);
+    const limit = denied.length
+      ? `, excluding ${denied.map(([p, v]) => `${p}: ${v.join(", ")}`).join("; ")}`
+      : lists.length === 1 && lists[0][1].length === 1
+        ? `, model fixed to ${lists[0][1][0]}`
+        : lists.length
+          ? `, models limited to ${lists.map(([p, v]) => `${p}: ${v.join(", ")}`).join("; ")}`
+          : "";
     els.bundleNote.textContent =
       `Unlocks ${which} for this browser` + limit +
       (switchable ? ". You can switch between the providers it holds keys for." : ".");

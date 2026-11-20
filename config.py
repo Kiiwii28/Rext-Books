@@ -199,7 +199,9 @@ PDF_RENDER_TIMEOUT = int(os.getenv("REXTBOOKS_PDF_TIMEOUT", "300"))
 #       "provider": "gemini",              # optional; inferred from the keys
 #       "model": "gemini-3.5-flash-lite",  # optional — pins exactly one model
 #       "models": ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"],
-#                                          # optional — the models that user may pick
+#                                          # optional — the ONLY models allowed
+#       "excludeModels": ["gemini-3.8-flash"],
+#                                          # optional — models that are NOT allowed
 #       "keys": {
 #         "gemini": "AIza…",
 #         "deepseek": "sk-…",
@@ -210,11 +212,21 @@ PDF_RENDER_TIMEOUT = int(os.getenv("REXTBOOKS_PDF_TIMEOUT", "300"))
 #
 # (``{"label": …, "gemini": "…"}`` with the keys at the top level also works.)
 #
-# ``models`` turns a bundle into a *plan*: a key restricted to the cheaper
-# models, say. It applies to the bundle's own provider, or can be spelled
-# ``{"gemini": [...], "deepseek": [...]}`` to differ per provider. Anything not
-# in that list is refused by the server, not merely hidden in the UI; ``model``
-# is the stricter shortcut for "this one model, no choice at all".
+# **Every model field is optional, and leaving all of them out means every model
+# is allowed.** There are two ways to restrict, and either can be omitted:
+#
+#   ``excludeModels``  the models that are NOT allowed ("everything except
+#                      these"), measured against the provider's own preset list.
+#                      This is the usual "plan" wording: block the expensive one.
+#   ``models``         the only models allowed ("just these"), when the list of
+#                      good ones is shorter than the list of bad ones.
+#   ``model``          the strictest shortcut: exactly one model, no choice.
+#
+# Each of them applies to the bundle's own provider, or can be spelled
+# ``{"gemini": [...], "deepseek": [...]}`` to differ per provider. If both
+# ``models`` and ``excludeModels`` are given, ``models`` is the starting set and
+# the exclusions are removed from it. A model that is not allowed is refused by
+# the server, not merely hidden in the UI.
 #
 # A passcode is a *credential*: anyone holding it spends the keys inside it.
 # Use a long random one (the README shows a one-liner to generate them), never
@@ -254,12 +266,12 @@ def _clean_model_list(value: object) -> list[str]:
     return out[:20]
 
 
-def _parse_allowed_models(raw: object, provider: str) -> dict[str, list[str]]:
-    """``"models"`` in a bundle entry: which models its users may pick.
+def _parse_model_map(raw: object, provider: str) -> dict[str, list[str]]:
+    """A bundle's ``models`` / ``excludeModels`` field.
 
     Either a plain list (meaning the bundle's own provider) or a mapping of
-    provider → list. An empty result means "no restriction": the user picks any
-    model, exactly as before this existed."""
+    provider → list. An empty result means "not specified", which is always a
+    legal state: no list of either kind means nothing is restricted."""
     if isinstance(raw, dict):
         out: dict[str, list[str]] = {}
         for name, value in raw.items():
@@ -301,7 +313,8 @@ def _parse_bundles(raw: object) -> dict[str, dict]:
         provider = _PROVIDER_ALIASES.get(provider, provider)
         if provider not in PROVIDERS:
             provider = next((p for p in _BUNDLE_LLM_KEYS if keys.get(p)), DEFAULT_PROVIDER)
-        allowed = _parse_allowed_models(entry.get("models"), provider)
+        allowed = _parse_model_map(entry.get("models"), provider)
+        excluded = _parse_model_map(entry.get("excludeModels"), provider)
         model = _clean(entry.get("model"))
         if model and provider not in allowed:
             # A pinned model is simply a one-item allow-list, so both spellings
@@ -313,6 +326,7 @@ def _parse_bundles(raw: object) -> dict[str, dict]:
             "provider": provider,
             "model": model,
             "models": allowed,
+            "excludeModels": excluded,
             "keys": keys,
         }
     return out
@@ -406,12 +420,29 @@ def request_models() -> dict[str, str]:
 
 def bundle_allowed_models(provider: str | None = None) -> list[str]:
     """The models the unlocked bundle permits for ``provider`` — empty when the
-    bundle places no limit at all."""
+    bundle places no limit at all.
+
+    ``excludeModels`` is the usual "plan" spelling ("everything except these"),
+    so it is measured against the provider's own preset list; ``models`` narrows
+    further when both are given. A configuration that excludes *every* preset
+    model is treated as a typo and falls back to the provider's default model
+    rather than silently allowing everything."""
     bundle = get_active_bundle()
     if bundle is None:
         return []
     name = _normalize(provider or get_llm_provider())
-    return list(bundle["models"].get(name) or [])
+    allow = list(bundle["models"].get(name) or [])
+    deny = bundle["excludeModels"].get(name) or []
+    if allow:
+        kept = [m for m in allow if m not in deny]
+        return kept or allow          # never let a stray exclusion open it up
+    if deny:
+        preset_models = list(_preset(name)["models"])
+        if not preset_models:
+            return []
+        kept = [m for m in preset_models if m not in deny]
+        return kept or [preset_models[0]]
+    return []
 
 
 def bundle_providers() -> list[str]:
@@ -439,7 +470,7 @@ def key_bundle_info() -> dict:
     bundle = get_active_bundle()
     if bundle is None:
         return {"configured": bool(_bundles()), "unlocked": False, "providers": [],
-                "models": {}}
+                "models": {}, "excludeModels": {}}
     available = bundle_providers()
     return {
         "configured": True,
@@ -451,9 +482,11 @@ def key_bundle_info() -> dict:
         "availableProviders": available,
         "provider": get_llm_provider(),
         "model": bundle["model"],
-        # provider -> the models this bundle permits (absent/empty = unrestricted).
-        # The Settings dialog shows only these instead of the full preset list.
-        "models": {p: list(m) for p, m in bundle["models"].items()},
+        # provider -> the models this bundle actually permits (absent/empty means
+        # unrestricted). ``excludeModels`` is reported alongside it so the UI can
+        # say *why* a model is missing rather than just showing a shorter list.
+        "models": {p: ms for p in _BUNDLE_LLM_KEYS if (ms := bundle_allowed_models(p))},
+        "excludeModels": {p: list(m) for p, m in bundle["excludeModels"].items() if m},
         # The pinned model belongs to the bundle's default provider, so the UI
         # can stay quiet about it once the user has switched to another one.
         "modelProvider": bundle["provider"] if bundle["model"] else "",
@@ -581,7 +614,7 @@ def get_llm_model(provider: str | None = None) -> str:
     bundle = get_active_bundle()
     if bundle is not None:
         chosen = (getattr(_ctx, "models", None) or {}).get(name)
-        allowed = bundle["models"].get(name) or []
+        allowed = bundle_allowed_models(name)
         if allowed:
             if chosen in allowed:
                 return chosen
@@ -619,7 +652,7 @@ def set_llm_model(model: str, provider: str | None = None) -> None:
     model = _clean(model)
     bundle = get_active_bundle()
     if bundle is not None:
-        allowed = bundle["models"].get(name) or []
+        allowed = bundle_allowed_models(name)
         if allowed:
             if not model:
                 model = allowed[0]

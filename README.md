@@ -192,10 +192,12 @@ Open <http://127.0.0.1:5000>.
   your browser rather than changing everyone else's. Enter it via the **🔑 icon
   beside the Settings title** (a small popover, shown only when the server has
   bundles configured); while unlocked, key fields it supplies are disabled because
-  writing them would change the shared settings file. A bundle can also **limit
-  which models its user may pick** (`"models": [...]`, or `"model": "…"` for
-  exactly one): Settings then offers only those models and the server refuses
-  anything else. See the Render notes for the JSON shape and a passcode generator.
+  writing them would change the shared settings file. Model limits are optional —
+  leave them out and every model is allowed. To restrict, name what's **not**
+  allowed with `"excludeModels": ["gemini-3.8-flash"]` (or name the only allowed
+  ones with `"models": [...]`, or pin one with `"model": "…"`). Settings then
+  offers only the surviving models and the server refuses anything else. See the
+  Render notes for the JSON shape and a passcode generator.
 - **Export** — **PDF** (15 palettes), **EPUB**, **Markdown**, or **JSON + images**
   (a `.zip` holding the book's own JSON plus an `Images/` folder with every picture
   it references, so a re-import keeps the pictures instead of showing broken

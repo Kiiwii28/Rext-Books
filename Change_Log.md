@@ -9,6 +9,38 @@ From 2026-09-20 onward, entries are logged at the time each change is made.
 
 ---
 
+## 2026-11-20 (bundle model limits: optional, and a deny-list spelling)
+
+Follow-up to the model restriction: "could the restriction field not be
+mandatory … and if it's in, say which models are restricted rather than which
+are enabled?"
+
+- Every model field stays **optional** — that was already true, but the docs and
+  the example read as though `models` were expected. Leaving all of
+  `models` / `excludeModels` / `model` out means every model is allowed (verified
+  end to end: `allowedModels: []`, the full preset list offered, any model
+  accepted).
+- New `"excludeModels": [...]` — the models that are **not** allowed, measured
+  against the provider's own preset list. This is the spelling the user asked
+  for: `"excludeModels": ["gemini-3.8-flash"]` blocks that one and leaves the
+  rest selectable. `models` (only these) and `model` (exactly one) still work,
+  and each accepts a per-provider `{provider: [...]}` map.
+- `_parse_allowed_models` became `_parse_model_map`, used for both fields;
+  `bundle_allowed_models()` now resolves the effective list (allow-list first,
+  then exclusions removed from it). A deny-list that happens to cover *every*
+  preset model is treated as a typo: it collapses to the provider's default
+  model rather than silently lifting the restriction.
+- `get_llm_model` / `set_llm_model` now call `bundle_allowed_models()` rather
+  than reading the raw allow-list, so an excluded model is refused with a 400
+  just like a non-listed one. `key_bundle_info()` reports the effective `models`
+  *and* the raw `excludeModels`, so Settings can say "disallows X — you can use
+  Y" instead of showing an unexplained shorter list.
+- Settings model note and the 🔑 popover both state the exclusions.
+- Verified: deny bundle offers the two remaining models, refuses an excluded one
+  (400), accepts an allowed one; per-provider deny map only affects its own
+  provider; unrestricted bundle unchanged; `local_settings.json` still
+  byte-identical.
+
 ## 2026-11-20 (mobile outline layout + ⋮ topbar menu; key bundles can restrict models)
 
 **1. Mobile: outline rows and the topbar.** Reported with a phone screenshot of
