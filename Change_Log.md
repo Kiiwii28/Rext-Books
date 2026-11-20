@@ -9,6 +9,25 @@ From 2026-09-20 onward, entries are logged at the time each change is made.
 
 ---
 
+## 2026-11-20 (bundle config: added the restricted "Guest" bundle)
+
+- `key_bundles.json` (gitignored) now holds three passcodes: **Mom** and
+  **Kiwi** (deepseek + gemini + pexels, no model limit, unchanged) and a new
+  **Guest** (gemini + pexels only — no DeepSeek key at all — with
+  `"models": ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]`).
+- No code changed; the same JSON is what goes into `REXTBOOKS_KEY_BUNDLES` on
+  Render. The field is the allow-list spelling from the previous entry.
+- Verified on the dev server (which picks `key_bundles.json` up on its mtime, no
+  restart needed): unlocking Guest offers only Google Gemini (switching to
+  DeepSeek is refused with "has no DeepSeek key"), offers exactly the two models
+  and rejects any other with a 400. **Lock** then drops the limit entirely — a
+  guest can save their own DeepSeek key, switch provider and pick any model —
+  and re-unlocking the Guest passcode puts the Gemini-only, two-model limit back.
+- Reminder recorded in the same session: the passcodes in this file follow the
+  `rb-NAME282` pattern, which is guessable; anyone guessing Mom's or Kiwi's
+  passcode gets the unrestricted keys, so those should be rotated to random
+  values before the guest is given their passcode.
+
 ## 2026-11-20 (bundle model limits: optional, and a deny-list spelling)
 
 Follow-up to the model restriction: "could the restriction field not be
